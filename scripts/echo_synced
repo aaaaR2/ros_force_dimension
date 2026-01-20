@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Point
+from example_interfaces.msg import Float64
+
+class SyncedEcho(Node):
+    def __init__(self):
+        super().__init__('synced_echo')
+        
+        self.pos_sub = self.create_subscription(
+            Point, '/robot/feedback/position', self.pos_callback, 10)
+        self.grip_sub = self.create_subscription(
+            Float64, '/robot/feedback/gripper_angle', self.grip_callback, 10)
+        
+        self.latest_pos = None
+        self.latest_grip = None
+
+    def pos_callback(self, msg):
+        self.latest_pos = msg
+        self.check_print()
+
+    def grip_callback(self, msg):
+        self.latest_grip = msg
+        self.check_print()
+
+    def check_print(self):
+        if self.latest_pos is not None and self.latest_grip is not None:
+            print(f"Position: x={self.latest_pos.x:.4f}, y={self.latest_pos.y:.4f}, z={self.latest_pos.z:.4f} | Gripper: {self.latest_grip.data:.4f}")
+            self.latest_pos = None
+            self.latest_grip = None
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = SyncedEcho()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

@@ -18,10 +18,15 @@ find_package(example_interfaces REQUIRED)
 # Find the Force Dimension SDK dependency.
 # *****************************************************************************
 
-# Ensure that the Force Dimension SDK can be found, if the environmental 
+# Add the current directory to CMAKE_PREFIX_PATH so CMake can find the config file
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Ensure that the Force Dimension SDK can be found, if the environmental
 # variable is set.
 if(DEFINED ENV{ForceDimensionSDK_DIR})
     set(ForceDimensionSDK_DIR $ENV{ForceDimensionSDK_DIR})
+else()
+    set(ForceDimensionSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 # Find the SDK.
@@ -36,11 +41,11 @@ endif()
 # Add the Force Dimension node dependency.
 # *****************************************************************************
 
-add_executable(node src/entry_point.cpp src/node.cpp 
+add_executable(node src/entry_point.cpp src/node.cpp
                     src/log.cpp src/publish.cpp src/subscribe.cpp
                     src/parameters.cpp src/gravity_compensation.cpp
                     src/forces.cpp)
-ament_target_dependencies(node rclcpp geometry_msgs 
+ament_target_dependencies(node rclcpp geometry_msgs
                           example_interfaces ForceDimensionSDK)
 
 # *****************************************************************************
@@ -74,7 +79,7 @@ ament_python_install_package(${PROJECT_NAME})
 # *****************************************************************************
 # Install the Python scripts.
 # *****************************************************************************
-install(PROGRAMS scripts/run_example DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/run_example scripts/echo_synced DESTINATION lib/${PROJECT_NAME})
 
 # *****************************************************************************
 # Testing.

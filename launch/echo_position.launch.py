@@ -1,7 +1,7 @@
-""" Launch file for a Force Dimension ROS2 test.
+"""Launch file for a Force Dimension ROS2 test.
 
-A `launch file`_ for the ROS2 `launch system`_ that runs a the ROS2 command 
-line utility to echo messages sent on the /robot/feedback/position topic. This 
+A `launch file`_ for the ROS2 `launch system`_ that runs a the ROS2 command
+line utility to echo messages sent on the /robot/feedback/position topic. This
 can be useful for basic testing and debugging.
 
 See the launch architecture_ documentation for further details.
@@ -14,29 +14,39 @@ See the launch architecture_ documentation for further details.
 """
 
 # Copyright 2022 Neuromechatronics Lab, Carnegie Mellon University
-# 
+#
 # Created by: a. whit. (nml@whit.contact)
-# 
+#
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess
-from launch.actions import TimerAction
+from launch.actions import ExecuteProcess, TimerAction
 from launch_ros.actions import Node
 
-def generate_launch_description():
-    
-    server_node \
-        = Node(package='force_dimension', executable='node')
-    
-    cmd = ['ros2', 'topic', 'echo', '/robot/feedback/position']
-    echo_cmd = ExecuteProcess(cmd=cmd, output='screen', emulate_tty=True)
-    delayed_echo_cmd = TimerAction(period=0.200, actions=[echo_cmd])
-    
-    return LaunchDescription([server_node, delayed_echo_cmd])
-    
-  
 
+def generate_launch_description():
+    server_node = Node(package="force_dimension", executable="node")
+
+    cmd = ["ros2", "topic", "echo", "/robot/feedback/position", "--no-daemon"]
+    echo_cmd = ExecuteProcess(cmd=cmd, output="screen", emulate_tty=True)
+    delayed_echo_cmd = TimerAction(period=0.200, actions=[echo_cmd])
+
+    cmd_orientation = [
+        "ros2",
+        "topic",
+        "echo",
+        "/robot/feedback/orientation",
+        "--no-daemon",
+    ]
+    echo_orientation_cmd = ExecuteProcess(
+        cmd=cmd_orientation, output="screen", emulate_tty=True
+    )
+    delayed_echo_orientation_cmd = TimerAction(
+        period=0.200, actions=[echo_orientation_cmd]
+    )
+
+    return LaunchDescription(
+        [server_node, delayed_echo_cmd, delayed_echo_orientation_cmd]
+    )
