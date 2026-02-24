@@ -64,6 +64,11 @@ const char GRIPPER_ANGLE_FEEDBACK_TOPIC[] = "feedback/gripper_angle";
  */
 const char ORIENTATION_FEEDBACK_TOPIC[] = "feedback/orientation";
 
+/** Topic for synchronized device state feedback.
+ *
+ */
+const char DEVICE_STATE_FEEDBACK_TOPIC[] = "feedback/state";
+
 } // namespace force_dimension
 
 #endif // FORCE_DIMENSION_TOPICS_H_

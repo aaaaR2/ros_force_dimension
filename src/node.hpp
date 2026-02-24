@@ -94,6 +94,9 @@ private:
   // Publishes wrist orientation in radians.
   void PublishOrientation(void);
 
+  // Publishes synchronized device state with selective metrics.
+  void PublishDeviceState(void);
+
   //// Publishes robot force messages.
   // void PublishForce(void);
 
@@ -147,6 +150,7 @@ private:
   // rclcpp::Publisher<ForceMessage>::SharedPtr force_publisher_;
   rclcpp::Subscription<ForceMessage>::SharedPtr force_subscription_;
   rclcpp::Publisher<OrientationMessage>::SharedPtr orientation_publisher_;
+  rclcpp::Publisher<DeviceStateMessage>::SharedPtr device_state_publisher_;
   OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 };
 

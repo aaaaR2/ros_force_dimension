@@ -37,6 +37,11 @@
  */
 void force_dimension::Node::PublishState() {
   sample_number_++;
+
+  // NEW: Publish synchronized device state with selective metrics
+  PublishDeviceState();
+
+  // Keep existing individual publishers for backward compatibility
   PublishPosition();
   PublishButton();
   PublishGripperGap();
@@ -244,6 +249,122 @@ void force_dimension::Node::PublishOrientation() {
 
   if (IsPublishableSample("orientation"))
     orientation_publisher_->publish(message);
+}
+
+/** Publish synchronized device state with selective metrics.
+ *
+ *  This method implements selective metric publishing to optimize performance.
+ *  Only metrics enabled via device_state_metrics parameters are read from hardware.
+ *  Uses atomic combined DHD API calls when available (e.g., dhdGetPositionAndOrientationRad).
+ */
+void force_dimension::Node::PublishDeviceState() {
+
+  // Check if we should publish this sample based on decimation
+  if (!IsPublishableSample("state"))
+    return;
+
+  // Read parameters to determine which metrics to include
+  bool include_position = get_parameter("device_state_metrics.include_position").as_bool();
+  bool include_velocity = get_parameter("device_state_metrics.include_velocity").as_bool();
+  bool include_orientation = get_parameter("device_state_metrics.include_orientation").as_bool();
+  bool include_gripper = get_parameter("device_state_metrics.include_gripper").as_bool();
+  bool include_buttons = get_parameter("device_state_metrics.include_buttons").as_bool();
+
+  // Initialize message
+  auto msg = DeviceStateMessage();
+  msg.header.stamp = this->now();
+  msg.header.frame_id = "haptic_device";
+
+  // Set validity flags
+  msg.has_position = include_position;
+  msg.has_velocity = include_velocity;
+  msg.has_orientation = include_orientation;
+  msg.has_gripper = include_gripper;
+  msg.has_buttons = include_buttons;
+
+  // Optimization: Use atomic combined getter for position + orientation
+  // This reduces DHD API calls when both are enabled
+  if (include_position || include_orientation) {
+    double px = 0.0, py = 0.0, pz = 0.0;
+    double oa = 0.0, ob = 0.0, og = 0.0;
+    bool has_wrist = hardware_disabled_ ? false : dhdHasWrist(device_id_);
+
+    auto result = hardware_disabled_
+        ? DHD_NO_ERROR
+        : (has_wrist
+            ? dhdGetPositionAndOrientationRad(&px, &py, &pz, &oa, &ob, &og, device_id_)
+            : dhdGetPosition(&px, &py, &pz, device_id_));
+
+    if (result < 0) {
+      std::string message = "Failed to read position/orientation for device state: ";
+      message += hardware_disabled_ ? "unknown error" : dhdErrorGetLastStr();
+      Log(message);
+    }
+
+    // Store position data (will be zeros if hardware disabled or read failed)
+    if (include_position) {
+      msg.position.x = px;
+      msg.position.y = py;
+      msg.position.z = pz;
+    }
+
+    // Store orientation data (only if device has wrist)
+    if (include_orientation && has_wrist) {
+      msg.orientation.x = oa;
+      msg.orientation.y = ob;
+      msg.orientation.z = og;
+    }
+  }
+
+  // Read velocity if enabled
+  if (include_velocity) {
+    double vx = 0.0, vy = 0.0, vz = 0.0;
+    auto result = hardware_disabled_
+        ? DHD_NO_ERROR
+        : dhdGetLinearVelocity(&vx, &vy, &vz, device_id_);
+
+    if (result < 0) {
+      Log("Failed to read velocity for device state");
+    }
+
+    msg.velocity.x = vx;
+    msg.velocity.y = vy;
+    msg.velocity.z = vz;
+  }
+
+  // Read gripper data if enabled
+  if (include_gripper) {
+    double gap = 0.0, angle = 0.0;
+    bool has_gripper = hardware_disabled_ ? false : dhdHasGripper(device_id_);
+
+    if (has_gripper) {
+      // Read gripper gap
+      int result = dhdGetGripperGap(&gap, device_id_);
+      if ((result != 0) && (result != DHD_TIMEGUARD)) {
+        Log("Failed to read gripper gap for device state");
+        gap = 0.0;
+      }
+
+      // Read gripper angle
+      result = dhdGetGripperAngleRad(&angle, device_id_);
+      if (result != 0) {
+        Log("Failed to read gripper angle for device state");
+        angle = 0.0;
+      }
+    }
+
+    msg.gripper_gap = gap;
+    msg.gripper_angle = angle;
+  }
+
+  // Read button state if enabled
+  if (include_buttons) {
+    int button_mask = hardware_disabled_ ? 0 : dhdGetButtonMask(device_id_);
+    msg.button_mask = button_mask;
+  }
+
+  // Publish the message
+  device_state_publisher_->publish(msg);
 }
 
 #endif // FORCE_DIMENSION_PUBLISH_H_

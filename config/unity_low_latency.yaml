@@ -1,0 +1,27 @@
+/robot/force_dimension:
+  ros__parameters:
+    sample_interval_s: 0.0005  # 2000 Hz internal sampling
+
+    # Low-latency decimation for Unity visualization
+    # With 2000 Hz sampling:
+    #   decimation=10  -> 200 Hz (5ms latency)
+    #   decimation=20  -> 100 Hz (10ms latency)
+    #   decimation=25  -> 80 Hz  (12.5ms latency)
+    feedback_sample_decimation:
+      position: 20        # Not used when state is enabled, kept for backward compatibility
+      velocity: 200       # Not used when state is enabled
+      orientation: 20     # Not used when state is enabled
+      button: 20          # Not used when state is enabled
+      gripper_gap: 20     # Not used when state is enabled
+      gripper_angle: 20   # Not used when state is enabled
+      state: 20           # 100 Hz for smooth Unity updates with low latency
+
+    # Enable all metrics for full device state
+    device_state_metrics:
+      include_position: true
+      include_velocity: true
+      include_orientation: true
+      include_gripper: true
+      include_buttons: true
+
+    disable_hardware: false

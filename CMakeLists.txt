@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(example_interfaces REQUIRED)
+find_package(force_dimension_msgs REQUIRED)
 
 # *****************************************************************************
 # Find the Force Dimension SDK dependency.
@@ -46,7 +47,7 @@ add_executable(node src/entry_point.cpp src/node.cpp
                     src/parameters.cpp src/gravity_compensation.cpp
                     src/forces.cpp)
 ament_target_dependencies(node rclcpp geometry_msgs
-                          example_interfaces ForceDimensionSDK)
+                          example_interfaces force_dimension_msgs ForceDimensionSDK)
 
 # *****************************************************************************
 # Install.
@@ -57,11 +58,12 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME})
 
 # *****************************************************************************
-# Install launch files.
+# Install launch files and config files.
 # *****************************************************************************
 
 install(DIRECTORY
   launch
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

@@ -82,6 +82,10 @@ void Node::on_configure(void) {
   topic = ORIENTATION_FEEDBACK_TOPIC;
   orientation_publisher_ = create_publisher<OrientationMessage>(topic, qos);
 
+  // Create the synchronized device state publisher.
+  topic = DEVICE_STATE_FEEDBACK_TOPIC;
+  device_state_publisher_ = create_publisher<DeviceStateMessage>(topic, qos);
+
   //// Create the force state publisher.
   // topic = FORCE_FEEDBACK_TOPIC;
   // force_publisher = create_publisher<force_message>(topic, qos);
@@ -96,6 +100,12 @@ void Node::on_configure(void) {
   declare_parameter<int>("feedback_sample_decimation.gripper_gap", 50);
   declare_parameter<int>("feedback_sample_decimation.gripper_angle", 50);
   declare_parameter<int>("feedback_sample_decimation.orientation", 50);
+  declare_parameter<int>("feedback_sample_decimation.state", 50);
+  declare_parameter<bool>("device_state_metrics.include_position", true);
+  declare_parameter<bool>("device_state_metrics.include_velocity", true);
+  declare_parameter<bool>("device_state_metrics.include_orientation", true);
+  declare_parameter<bool>("device_state_metrics.include_gripper", true);
+  declare_parameter<bool>("device_state_metrics.include_buttons", true);
   declare_parameter<float>("effector_mass_kg", 0.190000);
   declare_parameter<bool>("gravity_compensation", true);
   declare_parameter<bool>("enable_force", true);
@@ -203,6 +213,10 @@ void Node::on_activate(void) {
   // Enable gravity compensation.
   // Defaults to the ROS parameter value.
   set_gravity_compensation();
+
+  // Enable or disable forces.
+  // Defaults to the ROS parameter value.
+  set_enable_force();
 
   // Add a set parameters callback.
   // Initialize a function pointer to the set_parameters_callback member with

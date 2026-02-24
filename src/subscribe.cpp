@@ -33,11 +33,18 @@ void Node::SubscribeForce(void) {
       this->create_subscription<ForceMessage>(topic, qos, callback);
 }
 
-// Applies a force to the robotic manipulandum, as requested via ROS message.
+// Applies a force+torque wrench to the robotic manipulandum.
+// Reads translational forces from message.force and wrist torques from
+// message.torque, so the haptic constraint node can command both.
+// Gravity compensation is added automatically by the SDK on top of these values.
 void Node::force_callback(const ForceMessage message) {
   auto result = hardware_disabled_
                     ? 0
-                    : dhdSetForce(message.x, message.y, message.z, device_id_);
+                    : dhdSetForceAndTorqueAndGripperForce(
+                          message.force.x, message.force.y, message.force.z,
+                          message.torque.x, message.torque.y, message.torque.z,
+                          0.0,
+                          device_id_);
   if ((result != 0) & (result != DHD_MOTOR_SATURATED)) {
     std::string message = "Cannot set force: ";
     message += hardware_disabled_ ? "unknown error" : dhdErrorGetLastStr();

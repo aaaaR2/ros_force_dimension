@@ -18,6 +18,8 @@
 #include "example_interfaces/msg/int32.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "geometry_msgs/msg/wrench.hpp"
+#include "force_dimension_msgs/msg/device_state.hpp"
 
 // Declare namespace.
 namespace force_dimension {
@@ -34,10 +36,11 @@ typedef geometry_msgs::msg::Point PositionMessage;
  */
 typedef geometry_msgs::msg::Vector3 VelocityMessage;
 
-/** Effector force ROS message type definition.
- *
+/** Effector force+torque ROS message type definition.
+ *  Uses Wrench so the haptic constraint node can command both translational
+ *  forces and wrist torques in a single message.
  */
-typedef geometry_msgs::msg::Vector3 ForceMessage;
+typedef geometry_msgs::msg::Wrench ForceMessage;
 
 /** Wrist orientation ROS message type definition.
  *
@@ -58,6 +61,11 @@ typedef example_interfaces::msg::Float64 GripperGapMessage;
  *
  */
 typedef example_interfaces::msg::Float64 GripperAngleMessage;
+
+/** Synchronized device state ROS message type definition.
+ *
+ */
+typedef force_dimension_msgs::msg::DeviceState DeviceStateMessage;
 
 } // namespace force_dimension
 
