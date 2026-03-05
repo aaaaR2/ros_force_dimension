@@ -36,11 +36,11 @@ struct ConstraintState {
   // circle_plane_axes[0] and [1] are set at home time from the active channel config.
   bool   circle_enabled       = false;
   double circle_radius        = 0.11;        // m
-  double circle_center[2]     = {0.0, 0.0};  // in-plane center = device pos + offset, auto-set at home
-  double circle_center_offset[2] = {0.0, 0.0}; // m, fixed offset applied on top of homed position
+  double circle_center[2]     = {0.0, 0.0};  // in-plane center, set at home = device pos + home_offset
+  double home_offset[2]       = {0.0, 0.0};  // m, added to device position when homing circle center
   int    circle_plane_axes[2] = {1, 2};      // default: YZ plane (channel on X)
 
-  // Shared spring-damper
+  // Shared spring-damper (used when per-axis override is -1)
   double stiffness = 2000.0; // N/m
   double damping   = 50.0;   // N/(m/s), projected onto constraint normal
 

@@ -330,8 +330,8 @@ void Node::on_activate(void) {
   constraints_.channel_half_width[2] = get_parameter("constraints.channel_z.half_width").as_double();
   constraints_.circle_enabled              = get_parameter("constraints.circle.enabled").as_bool();
   constraints_.circle_radius               = get_parameter("constraints.circle.radius").as_double();
-  constraints_.circle_center_offset[0]     = get_parameter("constraints.home_offset_0").as_double();
-  constraints_.circle_center_offset[1]     = get_parameter("constraints.home_offset_1").as_double();
+  constraints_.home_offset[0]              = get_parameter("constraints.home_offset_0").as_double();
+  constraints_.home_offset[1]              = get_parameter("constraints.home_offset_1").as_double();
   constraints_.stiffness             = get_parameter("constraints.stiffness").as_double();
   constraints_.damping               = get_parameter("constraints.damping").as_double();
   constraints_.homed                 = false;
@@ -352,12 +352,18 @@ void Node::on_activate(void) {
     Log(message);
   }
 
-  // Create the 2 kHz haptic loop timer.
-  // Reads position/velocity directly from SDK, computes constraint forces,
-  // and applies them plus any external force commands.
-  auto haptic_callback = [this]() { this->ApplyHapticForce(); };
-  haptic_timer_ = create_wall_timer(std::chrono::microseconds(500), haptic_callback);
-  Log("Haptic loop timer initialized: 2 kHz");
+  // Launch the haptic loop as a tight busy-loop thread (SDK-paced).
+  // dhdSetForceAndTorqueAndGripperForce blocks until the next hardware servo
+  // tick (~4 kHz), so the thread runs at the hardware rate without an
+  // external timer. This matches the SDK example pattern and avoids the
+  // jitter caused by a ROS wall timer firing asynchronously with the SDK.
+  haptic_running_ = true;
+  haptic_thread_ = std::thread([this]() {
+    while (haptic_running_) {
+      this->ApplyHapticForce();
+    }
+  });
+  Log("Haptic loop thread started (SDK-paced busy loop)");
 
   // Reset the sample counter.
   sample_number_ = 0;
@@ -397,8 +403,9 @@ void Node::on_activate(void) {
  */
 void Node::on_deactivate(void) {
 
-  // Stop the haptic loop and publication timers.
-  haptic_timer_->cancel();
+  // Stop the haptic loop thread and publication timer.
+  haptic_running_ = false;
+  if (haptic_thread_.joinable()) haptic_thread_.join();
   timer_->cancel();
   // timer_->destroy();
 

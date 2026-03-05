@@ -36,6 +36,7 @@ void Node::SubscribeForce(void) {
 
 // Stores the latest external force+torque command (additive zero-order hold).
 void Node::force_callback(const ForceMessage message) {
+  std::lock_guard<std::mutex> lock(force_mutex_);
   last_force_command_ = message;
 }
 
@@ -57,9 +58,15 @@ void Node::ApplyHapticForce(void) {
   ComputeConstraintForce(pos, vel, cf);
 
   // Sum constraint forces with any external force command (zero-order hold).
-  const double fx = cf[0] + last_force_command_.force.x;
-  const double fy = cf[1] + last_force_command_.force.y;
-  const double fz = cf[2] + last_force_command_.force.z;
+  // Copy under lock to avoid data race with force_callback on the ROS thread.
+  ForceMessage cmd;
+  {
+    std::lock_guard<std::mutex> lock(force_mutex_);
+    cmd = last_force_command_;
+  }
+  const double fx = cf[0] + cmd.force.x;
+  const double fy = cf[1] + cmd.force.y;
+  const double fz = cf[2] + cmd.force.z;
 
   // Gripper constraint: dead-zone stiffness (one-sided wall at home gap).
   double fg = 0.0;
@@ -75,13 +82,15 @@ void Node::ApplyHapticForce(void) {
     }
   }
 
-  // Apply forces + wrist torques (passthrough from external) + gripper.
+  // Apply forces + Cartesian torques (passthrough from external) + gripper.
+  // Uses dhdSetForceAndTorqueAndGripperForce (Cartesian torques, not wrist joint torques)
+  // so that passing zero torque is truly neutral at all workspace positions.
   // No explicit force clamping — SDK motor saturation handles hardware limits.
-  auto result = dhdSetForceAndWristJointTorquesAndGripperForce(
+  auto result = dhdSetForceAndTorqueAndGripperForce(
                     fx, fy, fz,
-                    last_force_command_.torque.x,
-                    last_force_command_.torque.y,
-                    last_force_command_.torque.z,
+                    cmd.torque.x,
+                    cmd.torque.y,
+                    cmd.torque.z,
                     fg,
                     device_id_);
   if ((result != 0) & (result != DHD_MOTOR_SATURATED)) {

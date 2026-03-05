@@ -63,10 +63,10 @@ void Node::ComputeConstraintForce(const double pos[3], const double vel[3],
     int ax1 = (primary_axis == 2) ? 1 : 2;
     constraints_.circle_plane_axes[0] = ax0;
     constraints_.circle_plane_axes[1] = ax1;
-    // Circle center is captured from the current device position (which on
-    // startup has already been moved to the offset target by drdMoveTo).
-    constraints_.circle_center[0] = pos[ax0];
-    constraints_.circle_center[1] = pos[ax1];
+    // Circle center = device position + home_offset, so it tracks the
+    // configured offset position regardless of any residual drdMoveTo error.
+    constraints_.circle_center[0] = pos[ax0] + constraints_.home_offset[0];
+    constraints_.circle_center[1] = pos[ax1] + constraints_.home_offset[1];
     constraints_.homed = true;
 
     {
@@ -115,6 +115,7 @@ void Node::ComputeConstraintForce(const double pos[3], const double vel[3],
   // --- Circle constraint (radial dead-zone boundary in the task plane) ---
   // Plane is orthogonal to the primary channel axis (e.g. YZ when channel is X).
   // Normal is the outward radial direction. Damping projected onto it only.
+  // Circle uses the same global stiffness/damping as the channels.
   if (constraints_.circle_enabled) {
     const int ax0 = constraints_.circle_plane_axes[0];
     const int ax1 = constraints_.circle_plane_axes[1];

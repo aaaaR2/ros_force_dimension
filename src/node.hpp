@@ -10,7 +10,10 @@
 // Interface between ROS2 and the Force Dimension SDK for haptic robots.
 
 // Import essential libraries
+#include <atomic>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Include guard.
@@ -160,10 +163,12 @@ private:
   double baseline_effector_mass_kg_;
   double home_gripper_gap_;
   ConstraintState constraints_;        // cached workspace constraint parameters
-  ForceMessage last_force_command_;    // additive external forces (zero-order hold)
+  ForceMessage last_force_command_;    // additive external forces (zero-order hold), guarded by force_mutex_
+  mutable std::mutex force_mutex_;     // protects last_force_command_ between ROS and haptic threads
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr rehome_service_;
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::TimerBase::SharedPtr haptic_timer_;  // 2 kHz haptic loop
+  std::thread haptic_thread_;              // SDK-paced haptic loop (tight busy-loop)
+  std::atomic<bool> haptic_running_{false};
   rclcpp::Publisher<PositionMessage>::SharedPtr position_publisher_;
   rclcpp::Publisher<ButtonMessage>::SharedPtr button_publisher_;
   rclcpp::Publisher<GripperGapMessage>::SharedPtr gripper_gap_publisher_;

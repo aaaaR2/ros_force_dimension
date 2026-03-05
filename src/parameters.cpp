@@ -53,24 +53,6 @@ force_dimension::Node::set_parameters_callback(
       constraints_.circle_enabled = parameter.as_bool();
     if (parameter.get_name() == "constraints.circle.radius")
       constraints_.circle_radius = parameter.as_double();
-    if (parameter.get_name() == "constraints.home_offset_0") {
-      double v = parameter.as_double();
-      if (v < -0.08 || v > 0.08) {
-        result.successful = false;
-        result.reason = "home_offset_0 out of safe range [-0.08, 0.08] m";
-        return result;
-      }
-      constraints_.circle_center_offset[0] = v;
-    }
-    if (parameter.get_name() == "constraints.home_offset_1") {
-      double v = parameter.as_double();
-      if (v < -0.08 || v > 0.08) {
-        result.successful = false;
-        result.reason = "home_offset_1 out of safe range [-0.08, 0.08] m";
-        return result;
-      }
-      constraints_.circle_center_offset[1] = v;
-    }
     if (parameter.get_name() == "constraints.stiffness")
       constraints_.stiffness = parameter.as_double();
     if (parameter.get_name() == "constraints.damping")
