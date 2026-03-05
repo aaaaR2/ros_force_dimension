@@ -23,8 +23,14 @@
 // Import message types.
 #include "messages.hpp"
 
+// Import workspace constraint state.
+#include "constraints.hpp"
+
 // Import the parameter management message info.
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+
+// Import service type for rehome trigger.
+#include "std_srvs/srv/trigger.hpp"
 
 /** The ForceDimension namespace.
  */
@@ -108,10 +114,21 @@ private:
   // applied to the gripper by the robot.
   void SubscribeGripperForce(void);
 
-  // Applies a force to the robotic manipulandum, as requested via ROS
-  // message.
+  // Stores the latest force command received via ROS for the haptic loop.
   void force_callback(const ForceMessage);
-  // void ApplyForce
+
+  // Applies workspace constraint forces + external commands to the device at 2 kHz.
+  void ApplyHapticForce(void);
+
+  // Computes channel + circle dead-zone constraint forces from SDK position/velocity.
+  void ComputeConstraintForce(const double pos[3], const double vel[3],
+                               double force_out[3]);
+
+  // Service handler: resets constraint homing so offsets are re-captured on the
+  // next 2 kHz tick. Unity calls this when switching scenes.
+  void rehome_constraints_callback(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
   // Check whether or not the current data sample should be published.
   bool IsPublishableSample(std::string);
@@ -141,7 +158,12 @@ private:
   int sample_number_;
   bool hardware_disabled_;
   double baseline_effector_mass_kg_;
+  double home_gripper_gap_;
+  ConstraintState constraints_;        // cached workspace constraint parameters
+  ForceMessage last_force_command_;    // additive external forces (zero-order hold)
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr rehome_service_;
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr haptic_timer_;  // 2 kHz haptic loop
   rclcpp::Publisher<PositionMessage>::SharedPtr position_publisher_;
   rclcpp::Publisher<ButtonMessage>::SharedPtr button_publisher_;
   rclcpp::Publisher<GripperGapMessage>::SharedPtr gripper_gap_publisher_;

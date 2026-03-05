@@ -1,0 +1,41 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"path": "../../../../nml_plexon-ros_workspace"
+		}
+	],
+	"settings": {
+		"ROS2.distro": "humble",
+		"python.autoComplete.extraPaths": [
+			"/home/nml/ros_ws/install/spheres_environment_client/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/simple_ros2_unity_example/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_delay_out_center_task/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_transitions/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_threading_timer/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_tcp_endpoint/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_spheres_environment/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_parameter_collections/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_3d_attractor/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/force_dimension/local/lib/python3.10/dist-packages",
+			"/opt/ros/humble/lib/python3.10/site-packages",
+			"/opt/ros/humble/local/lib/python3.10/dist-packages"
+		],
+		"python.analysis.extraPaths": [
+			"/home/nml/ros_ws/install/spheres_environment_client/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/simple_ros2_unity_example/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_delay_out_center_task/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_transitions/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_threading_timer/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_tcp_endpoint/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_spheres_environment/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_parameter_collections/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/ros_3d_attractor/lib/python3.10/site-packages",
+			"/home/nml/ros_ws/install/force_dimension/local/lib/python3.10/dist-packages",
+			"/opt/ros/humble/lib/python3.10/site-packages",
+			"/opt/ros/humble/local/lib/python3.10/dist-packages"
+		]
+	}
+}

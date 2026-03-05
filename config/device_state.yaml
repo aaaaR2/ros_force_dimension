@@ -1,0 +1,34 @@
+# Configuration for Force Dimension device with synchronized DeviceState publishing
+#
+# This configuration enables the new DeviceState message with selective metric publishing
+# for performance optimization while maintaining backward compatibility with individual topics.
+
+/robot/force_dimension:
+  ros__parameters:
+    # Sampling configuration
+    sample_interval_s: 0.0005  # 2000 Hz recommended by Force Dimension
+
+    # Individual topic decimation (for backward compatibility)
+    # Decimation value N means publish every Nth sample
+    # Set to 0 or omit to disable that topic
+    feedback_sample_decimation:
+      position: 50          # 40 Hz (2000/50)
+      velocity: 200         # 10 Hz (2000/200) - velocity is typically slower
+      orientation: 50       # 40 Hz
+      button: 50            # 40 Hz
+      gripper_gap: 50       # 40 Hz
+      gripper_angle: 50     # 40 Hz
+      state: 50             # 40 Hz - NEW: DeviceState message decimation
+
+    # Selective metric publishing for DeviceState message
+    # Enable/disable individual metrics to optimize DHD API calls
+    # When a metric is disabled, the DHD API call is skipped entirely
+    device_state_metrics:
+      include_position: true      # Include position in DeviceState
+      include_velocity: true      # Include velocity in DeviceState
+      include_orientation: true   # Include orientation in DeviceState
+      include_gripper: true       # Include gripper data in DeviceState
+      include_buttons: true       # Include button data in DeviceState
+
+    # Hardware configuration
+    disable_hardware: false       # Set true for testing without device

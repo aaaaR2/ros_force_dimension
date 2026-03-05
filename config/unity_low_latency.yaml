@@ -25,3 +25,22 @@
       include_buttons: true
 
     disable_hardware: false
+
+    # Workspace constraint defaults (all disabled — override per-task in launch file).
+    constraints:
+      channel_x:
+        enabled: false
+        half_width: 0.003
+      channel_y:
+        enabled: false
+        half_width: 0.003
+      channel_z:
+        enabled: false
+        half_width: 0.003
+      circle:
+        enabled: false
+        radius: 0.11
+      home_offset_0: 0.0  # startup position + circle center, axis 0 of task plane (Y when channel=X)
+      home_offset_1: 0.0  # startup position + circle center, axis 1 of task plane (Z when channel=X)
+      stiffness: 2000.0
+      damping: 50.0

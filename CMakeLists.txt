@@ -14,6 +14,7 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(example_interfaces REQUIRED)
 find_package(force_dimension_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # *****************************************************************************
 # Find the Force Dimension SDK dependency.
@@ -45,9 +46,9 @@ endif()
 add_executable(node src/entry_point.cpp src/node.cpp
                     src/log.cpp src/publish.cpp src/subscribe.cpp
                     src/parameters.cpp src/gravity_compensation.cpp
-                    src/forces.cpp)
+                    src/forces.cpp src/constraints.cpp)
 ament_target_dependencies(node rclcpp geometry_msgs
-                          example_interfaces force_dimension_msgs ForceDimensionSDK)
+                          example_interfaces force_dimension_msgs std_srvs ForceDimensionSDK)
 
 # *****************************************************************************
 # Install.

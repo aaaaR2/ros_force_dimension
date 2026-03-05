@@ -31,11 +31,50 @@ force_dimension::Node::set_parameters_callback(
   result.successful = true;
   for (const auto &parameter : parameters) {
     if (parameter.get_name() == "effector_mass_kg")
-      set_effector_mass(parameter.as_double()); // get_value()
+      set_effector_mass(parameter.as_double());
     if (parameter.get_name() == "gravity_compensation")
       set_gravity_compensation(parameter.as_bool());
     if (parameter.get_name() == "enable_force")
       set_enable_force(parameter.as_bool());
+    // Workspace constraint parameters — update cached values for 2 kHz loop.
+    if (parameter.get_name() == "constraints.channel_x.enabled")
+      constraints_.channel_enabled[0] = parameter.as_bool();
+    if (parameter.get_name() == "constraints.channel_x.half_width")
+      constraints_.channel_half_width[0] = parameter.as_double();
+    if (parameter.get_name() == "constraints.channel_y.enabled")
+      constraints_.channel_enabled[1] = parameter.as_bool();
+    if (parameter.get_name() == "constraints.channel_y.half_width")
+      constraints_.channel_half_width[1] = parameter.as_double();
+    if (parameter.get_name() == "constraints.channel_z.enabled")
+      constraints_.channel_enabled[2] = parameter.as_bool();
+    if (parameter.get_name() == "constraints.channel_z.half_width")
+      constraints_.channel_half_width[2] = parameter.as_double();
+    if (parameter.get_name() == "constraints.circle.enabled")
+      constraints_.circle_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.circle.radius")
+      constraints_.circle_radius = parameter.as_double();
+    if (parameter.get_name() == "constraints.home_offset_0") {
+      double v = parameter.as_double();
+      if (v < -0.08 || v > 0.08) {
+        result.successful = false;
+        result.reason = "home_offset_0 out of safe range [-0.08, 0.08] m";
+        return result;
+      }
+      constraints_.circle_center_offset[0] = v;
+    }
+    if (parameter.get_name() == "constraints.home_offset_1") {
+      double v = parameter.as_double();
+      if (v < -0.08 || v > 0.08) {
+        result.successful = false;
+        result.reason = "home_offset_1 out of safe range [-0.08, 0.08] m";
+        return result;
+      }
+      constraints_.circle_center_offset[1] = v;
+    }
+    if (parameter.get_name() == "constraints.stiffness")
+      constraints_.stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.damping")
+      constraints_.damping = parameter.as_double();
   }
   return result;
 }
