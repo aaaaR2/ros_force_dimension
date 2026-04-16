@@ -218,25 +218,17 @@ void Node::on_activate(void) {
     // Stop any running regulation so we can reconfigure regulate flags.
     drdStop(false);
 
-    // Centre base + wrist; leave gripper at its natural position.
-    // Regulate flags are parameter-driven so launch files can lock or free
-    // specific actuator groups (see actuators.* parameters).
-    const bool reg_pos = get_parameter("actuators.regulate_pos").as_bool();
-    const bool reg_rot_param = get_parameter("actuators.regulate_rot").as_bool();
-    const bool reg_rot = reg_rot_param && dhdHasActiveWrist();
-    const bool reg_grip = get_parameter("actuators.regulate_grip").as_bool();
-    drdRegulatePos(reg_pos);
-    drdRegulateRot(reg_rot);
-    drdRegulateGrip(reg_grip);
-    {
-      std::string message = "Actuator regulation: pos=";
-      message += reg_pos ? "1" : "0";
-      message += " rot=";
-      message += reg_rot ? "1" : "0";
-      message += " grip=";
-      message += reg_grip ? "1" : "0";
-      Log(message);
-    }
+    // Phase 1 — autocenter: ALWAYS regulate all available axes regardless of
+    // the user's final actuators.regulate_* preferences. This guarantees the
+    // device reaches a known starting pose (translation at home_offset, wrist
+    // at zero Euler angles, gripper at natural gap) before we release any
+    // axis. Previously, launching with regulate_rot=false meant the wrist was
+    // never commanded to its upright orientation, so the 2 kHz loop captured
+    // whatever tilt the handle happened to have as "home."
+    const bool device_has_wrist = dhdHasActiveWrist();
+    drdRegulatePos(true);
+    drdRegulateRot(device_has_wrist);
+    drdRegulateGrip(false);  // leave gripper at its natural gap during autocenter
 
     if (drdStart() < 0) {
       std::string message = "Cannot start DRD regulation: ";
@@ -286,15 +278,22 @@ void Node::on_activate(void) {
       on_error();
     }
 
-    // After autocenter, selectively hold the axes that the launch file asked
-    // to keep locked. Any axis not held is released so the 2 kHz force loop
-    // owns it. When nothing is held, this matches the legacy drdStop(true).
+    // Phase 2 — apply runtime hold settings. All axes were regulated for
+    // autocenter; now release the ones the launch file does NOT want DRD to
+    // hold at runtime. The 2 kHz force loop owns any released axis.
+    // When nothing is held, this matches the legacy drdStop(true) behaviour
+    // used by Task 3 / pong launches.
     const bool hold_pos = get_parameter("actuators.hold_pos").as_bool();
     const bool hold_rot = get_parameter("actuators.hold_rot").as_bool();
-    const bool hold_grip = get_parameter("actuators.hold_grip").as_bool();
+    const bool hold_grip_param = get_parameter("actuators.hold_grip").as_bool();
+    const bool reg_grip_param = get_parameter("actuators.regulate_grip").as_bool();
+    // Only honor hold_grip if the launch file also asked to regulate the grip
+    // (legacy launches default regulate_grip=false — keep them untouched).
+    const bool hold_grip = hold_grip_param && reg_grip_param;
     if (!hold_pos) drdRegulatePos(false);
     if (!hold_rot) drdRegulateRot(false);
-    if (!hold_grip) drdRegulateGrip(false);
+    if (hold_grip) drdRegulateGrip(true);   // engage grip regulation for held grip
+    else           drdRegulateGrip(false);
     if (!hold_pos && !hold_rot && !hold_grip) {
       if (drdStop(true) < 0) {
         std::string message = "Cannot stop DRD regulation: ";
