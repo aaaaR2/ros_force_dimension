@@ -63,6 +63,13 @@ struct ConstraintState {
   double wrist_lock_stiffness         = 0.5;   // N*m/rad, per locked axis
   double wrist_lock_damping           = 0.05;  // N*m*s/rad, per locked axis
   double wrist_free_axis_damping      = 0.0;   // N*m*s/rad, viscous on free axis
+  // First-order low-pass on the free-axis angular velocity before applying
+  // viscous damping. Suppresses encoder-quantization noise that otherwise
+  // tremors the device at higher damping coefficients. alpha in [0,1]:
+  //   1.0 = no filtering (raw omega)
+  //   ~0.2 = strong smoothing, minimal perceptible lag
+  double wrist_free_axis_filter_alpha = 0.2;
+  double wrist_free_axis_omega_filt   = 0.0;   // filter state, reset on activation
   double wrist_home_angles[3]         = {0.0, 0.0, 0.0};  // captured on first tick
   bool   wrist_homed                  = false;
 };

@@ -139,6 +139,7 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.stiffness", 0.5);
   declare_parameter<double>("constraints.wrist_lock.damping", 0.05);
   declare_parameter<double>("constraints.wrist_lock.free_axis_damping", 0.0);
+  declare_parameter<double>("constraints.wrist_lock.free_axis_filter_alpha", 0.2);
 
   // Selective DRD actuator regulation. Defaults preserve legacy behaviour:
   // translation regulated during homing then released; wrist regulated iff the
@@ -400,6 +401,8 @@ void Node::on_activate(void) {
   constraints_.wrist_lock_stiffness  = get_parameter("constraints.wrist_lock.stiffness").as_double();
   constraints_.wrist_lock_damping    = get_parameter("constraints.wrist_lock.damping").as_double();
   constraints_.wrist_free_axis_damping = get_parameter("constraints.wrist_lock.free_axis_damping").as_double();
+  constraints_.wrist_free_axis_filter_alpha = get_parameter("constraints.wrist_lock.free_axis_filter_alpha").as_double();
+  constraints_.wrist_free_axis_omega_filt = 0.0;
   constraints_.wrist_homed           = false;
   for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = 0.0;
   if (constraints_.wrist_lock_enabled) {
@@ -408,6 +411,7 @@ void Node::on_activate(void) {
     message += " Kp=" + std::to_string(constraints_.wrist_lock_stiffness);
     message += " Kv=" + std::to_string(constraints_.wrist_lock_damping);
     message += " b_free=" + std::to_string(constraints_.wrist_free_axis_damping);
+    message += " alpha=" + std::to_string(constraints_.wrist_free_axis_filter_alpha);
     Log(message);
   }
 

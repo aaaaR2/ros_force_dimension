@@ -64,6 +64,8 @@ force_dimension::Node::set_parameters_callback(
       constraints_.wrist_lock_damping = parameter.as_double();
     if (parameter.get_name() == "constraints.wrist_lock.free_axis_damping")
       constraints_.wrist_free_axis_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.free_axis_filter_alpha")
+      constraints_.wrist_free_axis_filter_alpha = parameter.as_double();
   }
   return result;
 }

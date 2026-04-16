@@ -106,10 +106,17 @@ void Node::ApplyHapticForce(void) {
     // For small-to-moderate rotations, each Cartesian torque axis maps to
     // the Euler component with the same index. PD-lock the non-free axes,
     // apply viscous damping on the free axis using the SDK's hardware-rate
-    // angular velocity (no finite-difference noise, no ROS round-trip).
+    // angular velocity. Low-pass filter the free-axis omega so high-b
+    // settings don't amplify encoder-quantization noise into tremor.
+    double alpha = constraints_.wrist_free_axis_filter_alpha;
+    if (alpha < 0.0) alpha = 0.0;
+    if (alpha > 1.0) alpha = 1.0;
+    constraints_.wrist_free_axis_omega_filt =
+        alpha * omega[free_ax] +
+        (1.0 - alpha) * constraints_.wrist_free_axis_omega_filt;
     for (int i = 0; i < 3; ++i) {
       if (i == free_ax) {
-        wrist_tau[i] = -b_free * omega[i];
+        wrist_tau[i] = -b_free * constraints_.wrist_free_axis_omega_filt;
       } else {
         const double err = ang[i] - constraints_.wrist_home_angles[i];
         wrist_tau[i] = -Kp * err - Kv * omega[i];
