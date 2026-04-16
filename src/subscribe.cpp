@@ -9,6 +9,8 @@
 
 // Functionality related to receiving ROS2 messages and applying haptic forces.
 
+#include <cmath>
+
 // Import node header.
 #include "node.hpp"
 
@@ -47,20 +49,32 @@ void Node::force_callback(const ForceMessage message) {
 void Node::ApplyHapticForce(void) {
   if (hardware_disabled_) return;
 
-  // DRD health check: if the regulation thread has stopped (for example, due
-  // to an internal safety trip), log it once and skip the tick. Without this
-  // the device "hangs" silently while we keep commanding a dead loop.
-  static bool drd_stopped_logged = false;
+  // DRD watchdog: the regulation thread sometimes exits silently after a
+  // few seconds when we drive it with drdSetForce* at high rate (the SDK
+  // interprets the override as "caller is regulating now"). Detect and
+  // restart, logging once per drop so we know if restarts start failing.
+  static int drd_drop_count = 0;
   if (!drdIsRunning()) {
-    if (!drd_stopped_logged) {
-      std::string message = "DRD regulation thread stopped mid-run: ";
-      message += dhdErrorGetLastStr();
-      Log(message);
-      drd_stopped_logged = true;
+    ++drd_drop_count;
+    const char *err_str = dhdErrorGetLastStr();
+    std::string message = "DRD regulation thread stopped (drop #";
+    message += std::to_string(drd_drop_count);
+    message += "): ";
+    message += err_str ? err_str : "(null)";
+    Log(message);
+    // Try to restart. Re-apply the regulate flags first so the SDK knows
+    // which axes to hold; these calls are idempotent.
+    drdRegulatePos(true);
+    drdRegulateRot(false);
+    drdRegulateGrip(true);
+    if (drdStart() < 0) {
+      std::string fail = "drdStart() after drop failed: ";
+      fail += dhdErrorGetLastStr();
+      Log(fail);
+      return;  // skip this tick; try again next tick
     }
-    return;
+    Log("DRD regulation restarted");
   }
-  drd_stopped_logged = false;
 
   // Read position/orientation and velocities directly from the SDK.
   // When wrist lock is enabled, use the consolidated drd* getters so we pack
@@ -162,6 +176,21 @@ void Node::ApplyHapticForce(void) {
   const double tx = cmd.torque.x + wrist_tau[0];
   const double ty = cmd.torque.y + wrist_tau[1];
   const double tz = cmd.torque.z + wrist_tau[2];
+
+  // Skip the SDK write when nothing needs to be commanded. Calling
+  // drdSetForceAndTorqueAndGripperForce at 2 kHz with zeros makes DRD
+  // interpret the override as "caller has taken over" and shut down its
+  // regulation thread after a few seconds. GripperForce demo pattern: only
+  // write when there's a non-zero command. Threshold is tiny so noise
+  // doesn't reopen the channel, but real user intent always does.
+  constexpr double kIdleEpsilon = 1e-6;
+  const bool idle =
+      std::abs(fx) < kIdleEpsilon && std::abs(fy) < kIdleEpsilon &&
+      std::abs(fz) < kIdleEpsilon && std::abs(tx) < kIdleEpsilon &&
+      std::abs(ty) < kIdleEpsilon && std::abs(tz) < kIdleEpsilon &&
+      std::abs(fg) < kIdleEpsilon;
+  if (idle) return;
+
   auto result =
       haptic_use_drd_api_
           ? drdSetForceAndTorqueAndGripperForce(
