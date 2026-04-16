@@ -63,6 +63,11 @@ struct ConstraintState {
   double wrist_lock_stiffness         = 0.5;   // N*m/rad, per locked axis
   double wrist_lock_damping           = 0.05;  // N*m*s/rad, per locked axis
   double wrist_free_axis_damping      = 0.0;   // N*m*s/rad, viscous on free axis
+  // Position-error deadband for the locked axes. If |angle_error| is below
+  // this value, the PD outputs zero torque for that axis. Eliminates the
+  // 2 kHz small-torque hum when the participant holds slightly off home,
+  // at the cost of allowing the handle to drift within the deadband.
+  double wrist_lock_error_deadband    = 0.01;  // rad (~0.57 deg)
   // First-order low-pass on the free-axis angular velocity before applying
   // viscous damping. Suppresses encoder-quantization noise that otherwise
   // tremors the device at higher damping coefficients. alpha in [0,1]:

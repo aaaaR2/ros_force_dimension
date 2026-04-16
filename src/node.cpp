@@ -140,6 +140,7 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.damping", 0.05);
   declare_parameter<double>("constraints.wrist_lock.free_axis_damping", 0.0);
   declare_parameter<double>("constraints.wrist_lock.free_axis_filter_alpha", 0.2);
+  declare_parameter<double>("constraints.wrist_lock.error_deadband_rad", 0.01);
   // Per-wrist-joint home offsets. SDK joint ordering is hardware-dependent.
   // For the Sigma.7, empirically: slot 3 = roll, 4 = pitch, 5 = yaw.
   // Positive/negative biases the autocenter pose so the participant gets
@@ -428,6 +429,7 @@ void Node::on_activate(void) {
   constraints_.wrist_lock_damping    = get_parameter("constraints.wrist_lock.damping").as_double();
   constraints_.wrist_free_axis_damping = get_parameter("constraints.wrist_lock.free_axis_damping").as_double();
   constraints_.wrist_free_axis_filter_alpha = get_parameter("constraints.wrist_lock.free_axis_filter_alpha").as_double();
+  constraints_.wrist_lock_error_deadband = get_parameter("constraints.wrist_lock.error_deadband_rad").as_double();
   constraints_.wrist_free_axis_omega_filt = 0.0;
   constraints_.wrist_homed           = false;
   for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = 0.0;
@@ -438,6 +440,7 @@ void Node::on_activate(void) {
     message += " Kv=" + std::to_string(constraints_.wrist_lock_damping);
     message += " b_free=" + std::to_string(constraints_.wrist_free_axis_damping);
     message += " alpha=" + std::to_string(constraints_.wrist_free_axis_filter_alpha);
+    message += " deadband=" + std::to_string(constraints_.wrist_lock_error_deadband);
     Log(message);
   }
 

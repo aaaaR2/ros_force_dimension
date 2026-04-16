@@ -143,12 +143,23 @@ void Node::ApplyHapticForce(void) {
     constraints_.wrist_free_axis_omega_filt =
         alpha * omega[free_ax] +
         (1.0 - alpha) * constraints_.wrist_free_axis_omega_filt;
+    const double err_deadband = constraints_.wrist_lock_error_deadband;
     for (int i = 0; i < 3; ++i) {
       if (i == free_ax) {
         wrist_tau[i] = -b_free * constraints_.wrist_free_axis_omega_filt;
       } else {
-        const double err = ang[i] - constraints_.wrist_home_angles[i];
-        wrist_tau[i] = -Kp * err - Kv * omega[i];
+        double err = ang[i] - constraints_.wrist_home_angles[i];
+        // Deadband: inside this zone, the PD outputs zero torque so small
+        // grip offsets do not drive the SDK at 2 kHz with a constant force
+        // (which produces an audible low-amplitude motor hum).
+        if (std::abs(err) <= err_deadband) {
+          wrist_tau[i] = 0.0;
+        } else {
+          // Shrink the error by the deadband so there's no discontinuity at
+          // the zone boundary (torque ramps smoothly from zero).
+          err = err > 0.0 ? err - err_deadband : err + err_deadband;
+          wrist_tau[i] = -Kp * err - Kv * omega[i];
+        }
       }
     }
   }
