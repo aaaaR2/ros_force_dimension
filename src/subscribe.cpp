@@ -177,18 +177,23 @@ void Node::ApplyHapticForce(void) {
   const double ty = cmd.torque.y + wrist_tau[1];
   const double tz = cmd.torque.z + wrist_tau[2];
 
-  // Skip the SDK write when nothing needs to be commanded. Calling
-  // drdSetForceAndTorqueAndGripperForce at 2 kHz with zeros makes DRD
-  // interpret the override as "caller has taken over" and shut down its
-  // regulation thread after a few seconds. GripperForce demo pattern: only
-  // write when there's a non-zero command. Threshold is tiny so noise
-  // doesn't reopen the channel, but real user intent always does.
-  constexpr double kIdleEpsilon = 1e-6;
+  // Skip the SDK write when commanded forces are negligible. Two reasons:
+  // (1) Calling drdSetForceAndTorqueAndGripperForce at 2 kHz with zeros makes
+  //     DRD interpret the override as "caller has taken over" and shut down
+  //     regulation (reproduced with Test B, all gains zero).
+  // (2) The PD sees micro-motion from the participant's grip (muscle tremor)
+  //     and outputs tiny torques that pass a sub-1 mN threshold. Writing
+  //     those to the SDK at 2 kHz makes the motors audibly whir while the
+  //     handle is "held still." 5 mN / 5 mN·m is below human force
+  //     perception but above ambient sensor noise — hold-still is silent,
+  //     real input reaches the device unchanged.
+  constexpr double kIdleForceN = 0.005;         // 5 mN
+  constexpr double kIdleTorqueNm = 0.005;       // 5 mN·m
   const bool idle =
-      std::abs(fx) < kIdleEpsilon && std::abs(fy) < kIdleEpsilon &&
-      std::abs(fz) < kIdleEpsilon && std::abs(tx) < kIdleEpsilon &&
-      std::abs(ty) < kIdleEpsilon && std::abs(tz) < kIdleEpsilon &&
-      std::abs(fg) < kIdleEpsilon;
+      std::abs(fx) < kIdleForceN && std::abs(fy) < kIdleForceN &&
+      std::abs(fz) < kIdleForceN && std::abs(tx) < kIdleTorqueNm &&
+      std::abs(ty) < kIdleTorqueNm && std::abs(tz) < kIdleTorqueNm &&
+      std::abs(fg) < kIdleForceN;
   if (idle) return;
 
   auto result =
