@@ -62,6 +62,7 @@ struct ConstraintState {
   int    wrist_lock_free_axis         = 2;     // 0=X(roll), 1=Y(pitch), 2=Z(yaw)
   double wrist_lock_stiffness         = 0.5;   // N*m/rad, per locked axis
   double wrist_lock_damping           = 0.05;  // N*m*s/rad, per locked axis
+  double wrist_free_axis_damping      = 0.0;   // N*m*s/rad, viscous on free axis
   double wrist_home_angles[3]         = {0.0, 0.0, 0.0};  // captured on first tick
   bool   wrist_homed                  = false;
 };

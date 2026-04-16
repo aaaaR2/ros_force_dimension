@@ -57,6 +57,13 @@ force_dimension::Node::set_parameters_callback(
       constraints_.stiffness = parameter.as_double();
     if (parameter.get_name() == "constraints.damping")
       constraints_.damping = parameter.as_double();
+    // Wrist orientation lock (live-tunable via ROS parameter service).
+    if (parameter.get_name() == "constraints.wrist_lock.stiffness")
+      constraints_.wrist_lock_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.damping")
+      constraints_.wrist_lock_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.free_axis_damping")
+      constraints_.wrist_free_axis_damping = parameter.as_double();
   }
   return result;
 }
