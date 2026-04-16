@@ -144,21 +144,26 @@ void Node::ApplyHapticForce(void) {
         alpha * omega[free_ax] +
         (1.0 - alpha) * constraints_.wrist_free_axis_omega_filt;
     const double err_deadband = constraints_.wrist_lock_error_deadband;
-    for (int i = 0; i < 3; ++i) {
-      if (i == free_ax) {
-        wrist_tau[i] = -b_free * constraints_.wrist_free_axis_omega_filt;
+    // Cartesian torque axis (i=0..2) ↔ Euler ZYX angle index (2-i).
+    // drdGetOrientationRad returns ZYX: ang[0]=yaw (about Z), ang[1]=pitch,
+    // ang[2]=roll. Cartesian torques: wrist_tau[0]=roll, [1]=pitch, [2]=yaw.
+    for (int cart_i = 0; cart_i < 3; ++cart_i) {
+      if (cart_i == free_ax) {
+        wrist_tau[cart_i] =
+            -b_free * constraints_.wrist_free_axis_omega_filt;
       } else {
-        double err = ang[i] - constraints_.wrist_home_angles[i];
+        const int euler_i = 2 - cart_i;
+        double err = ang[euler_i] - constraints_.wrist_home_angles[euler_i];
         // Deadband: inside this zone, the PD outputs zero torque so small
         // grip offsets do not drive the SDK at 2 kHz with a constant force
-        // (which produces an audible low-amplitude motor hum).
+        // (audible low-amplitude motor hum).
         if (std::abs(err) <= err_deadband) {
-          wrist_tau[i] = 0.0;
+          wrist_tau[cart_i] = 0.0;
         } else {
-          // Shrink the error by the deadband so there's no discontinuity at
-          // the zone boundary (torque ramps smoothly from zero).
+          // Shrink the error by the deadband so there's no discontinuity
+          // at the zone boundary (torque ramps smoothly from zero).
           err = err > 0.0 ? err - err_deadband : err + err_deadband;
-          wrist_tau[i] = -Kp * err - Kv * omega[i];
+          wrist_tau[cart_i] = -Kp * err - Kv * omega[cart_i];
         }
       }
     }
