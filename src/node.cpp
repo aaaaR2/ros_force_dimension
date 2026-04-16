@@ -132,6 +132,18 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.stiffness", 2000.0);
   declare_parameter<double>("constraints.damping", 50.0);
 
+  // Selective DRD actuator regulation. Defaults preserve legacy behaviour:
+  // translation regulated during homing then released; wrist regulated iff the
+  // device has an active wrist; gripper never auto-centred.
+  // When actuators.hold_* is true, the DRD regulation is kept active after
+  // autocenter so that axis stays locked while the 2 kHz force loop runs.
+  declare_parameter<bool>("actuators.regulate_pos", true);
+  declare_parameter<bool>("actuators.regulate_rot", true);  // true -> auto = device_has_active_wrist
+  declare_parameter<bool>("actuators.regulate_grip", false);
+  declare_parameter<bool>("actuators.hold_pos", false);
+  declare_parameter<bool>("actuators.hold_rot", false);
+  declare_parameter<bool>("actuators.hold_grip", false);
+
   // Create the force control subcription.
   SubscribeForce();
 
@@ -195,9 +207,24 @@ void Node::on_activate(void) {
     drdStop(false);
 
     // Centre base + wrist; leave gripper at its natural position.
-    drdRegulatePos(1);
-    drdRegulateRot(dhdHasActiveWrist());
-    drdRegulateGrip(0);  // do not centre gripper
+    // Regulate flags are parameter-driven so launch files can lock or free
+    // specific actuator groups (see actuators.* parameters).
+    const bool reg_pos = get_parameter("actuators.regulate_pos").as_bool();
+    const bool reg_rot_param = get_parameter("actuators.regulate_rot").as_bool();
+    const bool reg_rot = reg_rot_param && dhdHasActiveWrist();
+    const bool reg_grip = get_parameter("actuators.regulate_grip").as_bool();
+    drdRegulatePos(reg_pos);
+    drdRegulateRot(reg_rot);
+    drdRegulateGrip(reg_grip);
+    {
+      std::string message = "Actuator regulation: pos=";
+      message += reg_pos ? "1" : "0";
+      message += " rot=";
+      message += reg_rot ? "1" : "0";
+      message += " grip=";
+      message += reg_grip ? "1" : "0";
+      Log(message);
+    }
 
     if (drdStart() < 0) {
       std::string message = "Cannot start DRD regulation: ";
@@ -247,12 +274,30 @@ void Node::on_activate(void) {
       on_error();
     }
 
-    // Stop regulation but keep forces enabled for the haptic loop.
-    if (drdStop(true) < 0) {
-      std::string message = "Cannot stop DRD regulation: ";
-      message += dhdErrorGetLastStr();
+    // After autocenter, selectively hold the axes that the launch file asked
+    // to keep locked. Any axis not held is released so the 2 kHz force loop
+    // owns it. When nothing is held, this matches the legacy drdStop(true).
+    const bool hold_pos = get_parameter("actuators.hold_pos").as_bool();
+    const bool hold_rot = get_parameter("actuators.hold_rot").as_bool();
+    const bool hold_grip = get_parameter("actuators.hold_grip").as_bool();
+    if (!hold_pos) drdRegulatePos(false);
+    if (!hold_rot) drdRegulateRot(false);
+    if (!hold_grip) drdRegulateGrip(false);
+    if (!hold_pos && !hold_rot && !hold_grip) {
+      if (drdStop(true) < 0) {
+        std::string message = "Cannot stop DRD regulation: ";
+        message += dhdErrorGetLastStr();
+        Log(message);
+        on_error();
+      }
+    } else {
+      std::string message = "DRD holding actuators: pos=";
+      message += hold_pos ? "1" : "0";
+      message += " rot=";
+      message += hold_rot ? "1" : "0";
+      message += " grip=";
+      message += hold_grip ? "1" : "0";
       Log(message);
-      on_error();
     }
 
     // Store gripper gap at natural resting position as the home target.
