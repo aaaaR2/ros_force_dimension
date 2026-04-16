@@ -170,15 +170,18 @@ void Node::ApplyHapticForce(void) {
       if (i == free_ax) {
         wrist_tau[i] = -b_free * constraints_.wrist_free_axis_omega_filt;
       } else {
+        // Damping (-Kv * ω) is always active so motion through the home
+        // point feels smooth. Only the SPRING component is killed inside
+        // the deadband — this lets small grip offsets produce zero static
+        // torque (no hum) without creating a velocity-damping discontinuity
+        // (which felt like a "bump" passing through home).
         double err = err_vec[i];
-        // Deadband: inside this zone, the PD outputs zero torque so small
-        // grip offsets do not drive the SDK at 2 kHz with a constant force.
-        if (std::abs(err) <= err_deadband) {
-          wrist_tau[i] = 0.0;
-        } else {
+        double spring = 0.0;
+        if (std::abs(err) > err_deadband) {
           err = err > 0.0 ? err - err_deadband : err + err_deadband;
-          wrist_tau[i] = -Kp * err - Kv * omega[i];
+          spring = -Kp * err;
         }
+        wrist_tau[i] = spring - Kv * omega[i];
       }
     }
   }
