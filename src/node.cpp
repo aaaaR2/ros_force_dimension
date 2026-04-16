@@ -140,7 +140,13 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.damping", 0.05);
   declare_parameter<double>("constraints.wrist_lock.free_axis_damping", 0.0);
   declare_parameter<double>("constraints.wrist_lock.free_axis_filter_alpha", 0.2);
-  declare_parameter<double>("constraints.wrist_lock.home_yaw_offset_rad", 0.0);
+  // Per-wrist-joint home offsets. SDK joint ordering is hardware-dependent.
+  // For the Sigma.7, empirically: slot 3 = roll, 4 = pitch, 5 = yaw.
+  // Positive/negative biases the autocenter pose so the participant gets
+  // asymmetric rotation range on that joint.
+  declare_parameter<double>("constraints.wrist_lock.home_joint_0_rad", 0.0);
+  declare_parameter<double>("constraints.wrist_lock.home_joint_1_rad", 0.0);
+  declare_parameter<double>("constraints.wrist_lock.home_joint_2_rad", 0.0);
 
   // Selective DRD actuator regulation. Defaults preserve legacy behaviour:
   // translation regulated during homing then released; wrist regulated iff the
@@ -268,23 +274,28 @@ void Node::on_activate(void) {
       positionCenter[ax0] = off0;
       positionCenter[ax1] = off1;
 
-      // Pre-rotate the wrist during autocenter. For a ZYX Euler sequence the
-      // wrist joint angles in DHD_MAX_DOF slots 3/4/5 are alpha/beta/gamma
-      // (yaw/pitch/roll). home_yaw_offset_rad shifts where the wrist starts
-      // so the participant has asymmetric range on the free axis.
-      const int kYawDofIndex = 3;
-      double yaw_off = get_parameter("constraints.wrist_lock.home_yaw_offset_rad").as_double();
-      // Clamp to a safe wrist range to avoid hitting joint limits at startup.
-      constexpr double kMaxYawOffsetRad = 0.7;  // ~40 deg
-      yaw_off = yaw_off < -kMaxYawOffsetRad ? -kMaxYawOffsetRad
-               : (yaw_off > kMaxYawOffsetRad ? kMaxYawOffsetRad : yaw_off);
-      positionCenter[kYawDofIndex] = yaw_off;
+      // Pre-rotate each wrist joint during autocenter. SDK joint ordering
+      // for the Sigma.7: slot 3 = roll, 4 = pitch, 5 = yaw (empirical). Each
+      // offset is clamped to ±40° to stay clear of joint limits.
+      constexpr double kMaxJointOffsetRad = 0.7;
+      auto clampJoint = [](double v) {
+        return v < -kMaxJointOffsetRad ? -kMaxJointOffsetRad
+             : (v > kMaxJointOffsetRad ?  kMaxJointOffsetRad : v);
+      };
+      double j0 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_0_rad").as_double());
+      double j1 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_1_rad").as_double());
+      double j2 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_2_rad").as_double());
+      positionCenter[3] = j0;
+      positionCenter[4] = j1;
+      positionCenter[5] = j2;
 
       {
         std::string message = "Moving to startup position: axis";
         message += std::to_string(ax0) + "=" + std::to_string(off0);
         message += " axis" + std::to_string(ax1) + "=" + std::to_string(off1);
-        message += " yaw=" + std::to_string(yaw_off) + " rad";
+        message += " wrist=[" + std::to_string(j0);
+        message += ", " + std::to_string(j1);
+        message += ", " + std::to_string(j2) + "] rad";
         Log(message);
       }
     }
