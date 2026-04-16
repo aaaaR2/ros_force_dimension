@@ -432,7 +432,9 @@ void Node::on_activate(void) {
   constraints_.wrist_lock_error_deadband = get_parameter("constraints.wrist_lock.error_deadband_rad").as_double();
   constraints_.wrist_free_axis_omega_filt = 0.0;
   constraints_.wrist_homed           = false;
-  for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = 0.0;
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c)
+      constraints_.wrist_home_rotation[r][c] = (r == c) ? 1.0 : 0.0;
   if (constraints_.wrist_lock_enabled) {
     std::string message = "Wrist lock: free_axis=";
     message += std::to_string(constraints_.wrist_lock_free_axis);

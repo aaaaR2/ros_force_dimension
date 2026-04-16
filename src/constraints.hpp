@@ -75,7 +75,11 @@ struct ConstraintState {
   //   ~0.2 = strong smoothing, minimal perceptible lag
   double wrist_free_axis_filter_alpha = 0.2;
   double wrist_free_axis_omega_filt   = 0.0;   // filter state, reset on activation
-  double wrist_home_angles[3]         = {0.0, 0.0, 0.0};  // captured on first tick
+  // Home orientation stored as a 3x3 rotation matrix so the PD error is
+  // computed as a rotation vector in world frame — no Euler-axis convention
+  // dependence, no gimbal coupling. Initialized to identity; overwritten on
+  // first tick after activation.
+  double wrist_home_rotation[3][3]    = {{1,0,0},{0,1,0},{0,0,1}};
   bool   wrist_homed                  = false;
 };
 

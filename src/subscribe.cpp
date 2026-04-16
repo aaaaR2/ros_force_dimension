@@ -83,12 +83,12 @@ void Node::ApplyHapticForce(void) {
   // with the lighter dhd position+linear-velocity pair.
   double pos[3] = {};
   double vel[3] = {};
-  double ang[3] = {};    // wrist Euler angles (rad)
-  double omega[3] = {};  // Cartesian angular velocity (rad/s)
+  double ang[3] = {};    // wrist Euler angles (rad) — unused for PD, kept for logging
+  double omega[3] = {};  // Cartesian angular velocity (rad/s, world frame)
+  double R[3][3] = {};   // end-effector rotation matrix (world frame)
   bool   got_orientation = false;
   if (constraints_.wrist_lock_enabled) {
     double pg = 0.0;       // gripper gap (unused here)
-    double R[3][3] = {};   // rotation matrix (unused here)
     double vg = 0.0;       // gripper velocity (unused here)
     drdGetPositionAndOrientation(&pos[0], &pos[1], &pos[2],
                                  &ang[0], &ang[1], &ang[2],
@@ -124,46 +124,60 @@ void Node::ApplyHapticForce(void) {
   // drd getters to save USB transactions — just run the PD here.
   double wrist_tau[3] = {0.0, 0.0, 0.0};
   if (constraints_.wrist_lock_enabled && got_orientation) {
+    // Capture home orientation as a rotation matrix on the first tick.
     if (!constraints_.wrist_homed) {
-      for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = ang[i];
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+          constraints_.wrist_home_rotation[r][c] = R[r][c];
       constraints_.wrist_homed = true;
     }
+
+    // Compute the orientation error as a rotation vector in world frame.
+    //   R_err = R_current * R_home^T  (rotation from home to current).
+    // For small rotations, R_err ≈ I + [err_vec]_×, so the skew-symmetric
+    // part of R_err gives the rotation vector directly. This is
+    // convention-free: err_vec[0] is rotation about world X (roll),
+    // err_vec[1] about Y (pitch), err_vec[2] about Z (yaw), regardless of
+    // what Euler convention the SDK uses for the raw angles.
+    double R_err[3][3] = {};
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        double s = 0.0;
+        for (int k = 0; k < 3; ++k)
+          s += R[i][k] * constraints_.wrist_home_rotation[j][k];
+        R_err[i][j] = s;
+      }
+    }
+    double err_vec[3];
+    err_vec[0] = 0.5 * (R_err[2][1] - R_err[1][2]);  // roll error
+    err_vec[1] = 0.5 * (R_err[0][2] - R_err[2][0]);  // pitch error
+    err_vec[2] = 0.5 * (R_err[1][0] - R_err[0][1]);  // yaw error
+
     const int free_ax = constraints_.wrist_lock_free_axis;
     const double Kp = constraints_.wrist_lock_stiffness;
     const double Kv = constraints_.wrist_lock_damping;
     const double b_free = constraints_.wrist_free_axis_damping;
-    // For small-to-moderate rotations, each Cartesian torque axis maps to
-    // the Euler component with the same index. PD-lock the non-free axes,
-    // apply viscous damping on the free axis using the SDK's hardware-rate
-    // angular velocity. Low-pass filter the free-axis omega so high-b
-    // settings don't amplify encoder-quantization noise into tremor.
+    // LPF on the free-axis omega (suppresses encoder-quantization noise).
     double alpha = constraints_.wrist_free_axis_filter_alpha;
     if (alpha < 0.0) alpha = 0.0;
     if (alpha > 1.0) alpha = 1.0;
     constraints_.wrist_free_axis_omega_filt =
         alpha * omega[free_ax] +
         (1.0 - alpha) * constraints_.wrist_free_axis_omega_filt;
+
     const double err_deadband = constraints_.wrist_lock_error_deadband;
-    // Cartesian torque axis (i=0..2) ↔ Euler ZYX angle index (2-i).
-    // drdGetOrientationRad returns ZYX: ang[0]=yaw (about Z), ang[1]=pitch,
-    // ang[2]=roll. Cartesian torques: wrist_tau[0]=roll, [1]=pitch, [2]=yaw.
-    for (int cart_i = 0; cart_i < 3; ++cart_i) {
-      if (cart_i == free_ax) {
-        wrist_tau[cart_i] =
-            -b_free * constraints_.wrist_free_axis_omega_filt;
+    for (int i = 0; i < 3; ++i) {
+      if (i == free_ax) {
+        wrist_tau[i] = -b_free * constraints_.wrist_free_axis_omega_filt;
       } else {
-        const int euler_i = 2 - cart_i;
-        double err = ang[euler_i] - constraints_.wrist_home_angles[euler_i];
+        double err = err_vec[i];
         // Deadband: inside this zone, the PD outputs zero torque so small
-        // grip offsets do not drive the SDK at 2 kHz with a constant force
-        // (audible low-amplitude motor hum).
+        // grip offsets do not drive the SDK at 2 kHz with a constant force.
         if (std::abs(err) <= err_deadband) {
-          wrist_tau[cart_i] = 0.0;
+          wrist_tau[i] = 0.0;
         } else {
-          // Shrink the error by the deadband so there's no discontinuity
-          // at the zone boundary (torque ramps smoothly from zero).
           err = err > 0.0 ? err - err_deadband : err + err_deadband;
-          wrist_tau[cart_i] = -Kp * err - Kv * omega[cart_i];
+          wrist_tau[i] = -Kp * err - Kv * omega[i];
         }
       }
     }
