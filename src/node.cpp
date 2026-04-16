@@ -132,6 +132,13 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.stiffness", 2000.0);
   declare_parameter<double>("constraints.damping", 50.0);
 
+  // Wrist orientation lock: PD on two of three Cartesian rotation axes,
+  // leaves the third (default: Z/yaw) free. Applies in the 2 kHz loop.
+  declare_parameter<bool>("constraints.wrist_lock.enabled", false);
+  declare_parameter<int>("constraints.wrist_lock.free_axis_cartesian", 2);
+  declare_parameter<double>("constraints.wrist_lock.stiffness", 0.5);
+  declare_parameter<double>("constraints.wrist_lock.damping", 0.05);
+
   // Selective DRD actuator regulation. Defaults preserve legacy behaviour:
   // translation regulated during homing then released; wrist regulated iff the
   // device has an active wrist; gripper never auto-centred.
@@ -388,6 +395,19 @@ void Node::on_activate(void) {
   for (int i = 0; i < 3; ++i) constraints_.channel_offset[i] = 0.0;
   constraints_.circle_center[0]      = 0.0;
   constraints_.circle_center[1]      = 0.0;
+  constraints_.wrist_lock_enabled    = get_parameter("constraints.wrist_lock.enabled").as_bool();
+  constraints_.wrist_lock_free_axis  = get_parameter("constraints.wrist_lock.free_axis_cartesian").as_int();
+  constraints_.wrist_lock_stiffness  = get_parameter("constraints.wrist_lock.stiffness").as_double();
+  constraints_.wrist_lock_damping    = get_parameter("constraints.wrist_lock.damping").as_double();
+  constraints_.wrist_homed           = false;
+  for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = 0.0;
+  if (constraints_.wrist_lock_enabled) {
+    std::string message = "Wrist lock: free_axis=";
+    message += std::to_string(constraints_.wrist_lock_free_axis);
+    message += " Kp=" + std::to_string(constraints_.wrist_lock_stiffness);
+    message += " Kv=" + std::to_string(constraints_.wrist_lock_damping);
+    Log(message);
+  }
 
   // Cache which SDK force API the 2 kHz loop should use.
   haptic_use_drd_api_ = get_parameter("haptic_loop.use_drd_api").as_bool();

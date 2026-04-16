@@ -47,6 +47,23 @@ struct ConstraintState {
   // True once offsets and circle_center have been captured from the first
   // valid SDK position read. Reset to false on re-activation.
   bool homed = false;
+
+  // Orientation lock: spring-damper PD controller that holds two of the three
+  // Cartesian rotation axes at their home orientation while leaving the third
+  // free (typically the yaw/Z axis). Runs in the 2 kHz loop and sums its
+  // torques with the external Wrench command torque (so Python-side viscous
+  // damping on the free axis composes cleanly).
+  //
+  // Implementation reads dhdGetOrientationRad (wrist Euler angles) plus
+  // dhdGetAngularVelocityRad (Cartesian angular velocity). For small-to-
+  // moderate rotations, Euler components map to Cartesian axes well enough
+  // for an experiment-grade lock.
+  bool   wrist_lock_enabled           = false;
+  int    wrist_lock_free_axis         = 2;     // 0=X(roll), 1=Y(pitch), 2=Z(yaw)
+  double wrist_lock_stiffness         = 0.5;   // N*m/rad, per locked axis
+  double wrist_lock_damping           = 0.05;  // N*m*s/rad, per locked axis
+  double wrist_home_angles[3]         = {0.0, 0.0, 0.0};  // captured on first tick
+  bool   wrist_homed                  = false;
 };
 
 } // namespace force_dimension

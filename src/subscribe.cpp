@@ -47,11 +47,31 @@ void Node::force_callback(const ForceMessage message) {
 void Node::ApplyHapticForce(void) {
   if (hardware_disabled_) return;
 
-  // Read position and velocity directly from the SDK (no ROS transport).
+  // Read position/orientation and velocities directly from the SDK.
+  // When wrist lock is enabled, use the consolidated drd* getters so we pack
+  // position + Euler + linear + angular velocity into two USB transactions
+  // instead of four (matters on WSL/usbipd). When wrist lock is off, stick
+  // with the lighter dhd position+linear-velocity pair.
   double pos[3] = {};
   double vel[3] = {};
-  dhdGetPosition(&pos[0], &pos[1], &pos[2], device_id_);
-  dhdGetLinearVelocity(&vel[0], &vel[1], &vel[2], device_id_);
+  double ang[3] = {};    // wrist Euler angles (rad)
+  double omega[3] = {};  // Cartesian angular velocity (rad/s)
+  bool   got_orientation = false;
+  if (constraints_.wrist_lock_enabled) {
+    double pg = 0.0;       // gripper gap (unused here)
+    double R[3][3] = {};   // rotation matrix (unused here)
+    double vg = 0.0;       // gripper velocity (unused here)
+    drdGetPositionAndOrientation(&pos[0], &pos[1], &pos[2],
+                                 &ang[0], &ang[1], &ang[2],
+                                 &pg, R, device_id_);
+    drdGetVelocity(&vel[0], &vel[1], &vel[2],
+                   &omega[0], &omega[1], &omega[2],
+                   &vg, device_id_);
+    got_orientation = true;
+  } else {
+    dhdGetPosition(&pos[0], &pos[1], &pos[2], device_id_);
+    dhdGetLinearVelocity(&vel[0], &vel[1], &vel[2], device_id_);
+  }
 
   // Compute workspace constraint forces (channel + circle dead-zone).
   double cf[3] = {};
@@ -67,6 +87,29 @@ void Node::ApplyHapticForce(void) {
   const double fx = cf[0] + cmd.force.x;
   const double fy = cf[1] + cmd.force.y;
   const double fz = cf[2] + cmd.force.z;
+
+  // Wrist orientation lock: PD on two of three Cartesian rotation axes.
+  // Leaves the free axis (typically Z/yaw) untouched so the Python
+  // viscous_damping_wrist node can drive it via cmd.torque.*.
+  // Orientation + angular velocity were already read above in the consolidated
+  // drd getters to save USB transactions — just run the PD here.
+  double wrist_tau[3] = {0.0, 0.0, 0.0};
+  if (constraints_.wrist_lock_enabled && got_orientation) {
+    if (!constraints_.wrist_homed) {
+      for (int i = 0; i < 3; ++i) constraints_.wrist_home_angles[i] = ang[i];
+      constraints_.wrist_homed = true;
+    }
+    const int free_ax = constraints_.wrist_lock_free_axis;
+    const double Kp = constraints_.wrist_lock_stiffness;
+    const double Kv = constraints_.wrist_lock_damping;
+    // For small-to-moderate rotations, each Cartesian torque axis maps to
+    // the Euler component with the same index. Skip the free axis.
+    for (int i = 0; i < 3; ++i) {
+      if (i == free_ax) continue;
+      const double err = ang[i] - constraints_.wrist_home_angles[i];
+      wrist_tau[i] = -Kp * err - Kv * omega[i];
+    }
+  }
 
   // Gripper constraint: dead-zone stiffness (one-sided wall at home gap).
   double fg = 0.0;
@@ -88,16 +131,19 @@ void Node::ApplyHapticForce(void) {
   // each tick (which would cause motor chatter and weak hold).
   // Cartesian torques (not wrist joint torques): passing zero torque is neutral
   // at all workspace positions. SDK motor saturation handles hardware limits.
+  const double tx = cmd.torque.x + wrist_tau[0];
+  const double ty = cmd.torque.y + wrist_tau[1];
+  const double tz = cmd.torque.z + wrist_tau[2];
   auto result =
       haptic_use_drd_api_
           ? drdSetForceAndTorqueAndGripperForce(
                 fx, fy, fz,
-                cmd.torque.x, cmd.torque.y, cmd.torque.z,
+                tx, ty, tz,
                 fg,
                 device_id_)
           : dhdSetForceAndTorqueAndGripperForce(
                 fx, fy, fz,
-                cmd.torque.x, cmd.torque.y, cmd.torque.z,
+                tx, ty, tz,
                 fg,
                 device_id_);
   if ((result != 0) & (result != DHD_MOTOR_SATURATED)) {
