@@ -47,6 +47,21 @@ void Node::force_callback(const ForceMessage message) {
 void Node::ApplyHapticForce(void) {
   if (hardware_disabled_) return;
 
+  // DRD health check: if the regulation thread has stopped (for example, due
+  // to an internal safety trip), log it once and skip the tick. Without this
+  // the device "hangs" silently while we keep commanding a dead loop.
+  static bool drd_stopped_logged = false;
+  if (!drdIsRunning()) {
+    if (!drd_stopped_logged) {
+      std::string message = "DRD regulation thread stopped mid-run: ";
+      message += dhdErrorGetLastStr();
+      Log(message);
+      drd_stopped_logged = true;
+    }
+    return;
+  }
+  drd_stopped_logged = false;
+
   // Read position/orientation and velocities directly from the SDK.
   // When wrist lock is enabled, use the consolidated drd* getters so we pack
   // position + Euler + linear + angular velocity into two USB transactions
