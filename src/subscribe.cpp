@@ -83,16 +83,23 @@ void Node::ApplyHapticForce(void) {
   }
 
   // Apply forces + Cartesian torques (passthrough from external) + gripper.
-  // Uses dhdSetForceAndTorqueAndGripperForce (Cartesian torques, not wrist joint torques)
-  // so that passing zero torque is truly neutral at all workspace positions.
-  // No explicit force clamping — SDK motor saturation handles hardware limits.
-  auto result = dhdSetForceAndTorqueAndGripperForce(
-                    fx, fy, fz,
-                    cmd.torque.x,
-                    cmd.torque.y,
-                    cmd.torque.z,
-                    fg,
-                    device_id_);
+  // When any actuator is held by DRD, use the drd* variant so our commands
+  // compose additively with DRD's regulation output instead of overwriting it
+  // each tick (which would cause motor chatter and weak hold).
+  // Cartesian torques (not wrist joint torques): passing zero torque is neutral
+  // at all workspace positions. SDK motor saturation handles hardware limits.
+  auto result =
+      haptic_use_drd_api_
+          ? drdSetForceAndTorqueAndGripperForce(
+                fx, fy, fz,
+                cmd.torque.x, cmd.torque.y, cmd.torque.z,
+                fg,
+                device_id_)
+          : dhdSetForceAndTorqueAndGripperForce(
+                fx, fy, fz,
+                cmd.torque.x, cmd.torque.y, cmd.torque.z,
+                fg,
+                device_id_);
   if ((result != 0) & (result != DHD_MOTOR_SATURATED)) {
     std::string message = "Cannot set force: ";
     message += dhdErrorGetLastStr();

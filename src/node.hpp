@@ -160,6 +160,7 @@ private:
   bool configured_;
   int sample_number_;
   bool hardware_disabled_;
+  bool haptic_use_drd_api_ = false;  // true: drd* force API (composes with DRD regulation)
   double baseline_effector_mass_kg_;
   double home_gripper_gap_;
   ConstraintState constraints_;        // cached workspace constraint parameters

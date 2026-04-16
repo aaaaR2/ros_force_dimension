@@ -144,6 +144,11 @@ void Node::on_configure(void) {
   declare_parameter<bool>("actuators.hold_rot", false);
   declare_parameter<bool>("actuators.hold_grip", false);
 
+  // When any actuator is held by DRD, the 2 kHz force loop must use the drd*
+  // force API instead of dhd*, so our commands add on top of DRD regulation
+  // instead of overwriting it each tick (which causes motor chatter).
+  declare_parameter<bool>("haptic_loop.use_drd_api", false);
+
   // Create the force control subcription.
   SubscribeForce();
 
@@ -383,6 +388,12 @@ void Node::on_activate(void) {
   for (int i = 0; i < 3; ++i) constraints_.channel_offset[i] = 0.0;
   constraints_.circle_center[0]      = 0.0;
   constraints_.circle_center[1]      = 0.0;
+
+  // Cache which SDK force API the 2 kHz loop should use.
+  haptic_use_drd_api_ = get_parameter("haptic_loop.use_drd_api").as_bool();
+  if (haptic_use_drd_api_) {
+    Log("Haptic loop: using drd* force API (composes with DRD regulation)");
+  }
   {
     std::string message = "Constraints: channel_x=";
     message += constraints_.channel_enabled[0] ? "ON" : "OFF";
