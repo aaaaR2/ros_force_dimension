@@ -75,6 +75,44 @@ struct ConstraintState {
   //   ~0.2 = strong smoothing, minimal perceptible lag
   double wrist_free_axis_filter_alpha = 0.2;
   double wrist_free_axis_omega_filt   = 0.0;   // filter state, reset on activation
+  // First-order low-pass on the locked-axis rotation-vector error before the
+  // PD spring. Killing encoder dither at the source stops boundary-flutter
+  // at the deadband edge, which the smoothstep ramp alone can't fully fix
+  // when the error itself is jittering across the threshold every tick.
+  // Same alpha convention as the omega filter: 1.0 = raw, lower = smoother.
+  double wrist_lock_error_filter_alpha = 0.15;
+  double wrist_lock_error_filt[3]      = {0.0, 0.0, 0.0};
+  // First-order low-pass on the locked-axis angular velocity before the PD
+  // damping term. Without this, encoder velocity quantization near zero
+  // motion produces a buzzing damping torque that dominates whenever the
+  // handle is held at gravity-bias equilibrium (typically the bottom of
+  // the pitch deadband). Same alpha convention as the other filters.
+  double wrist_lock_omega_filter_alpha = 0.15;
+  double wrist_lock_omega_filt[3]      = {0.0, 0.0, 0.0};
+  // Joint-space PD mode. When true, the wrist lock reads per-joint angles
+  // (dhdGetWristJointAngles) and writes per-joint torques
+  // (drdSetForceAndWristJointTorquesAndGripperForce) instead of Cartesian
+  // torque. This avoids the Sigma.7 parallel-mechanism Jacobian projecting
+  // small Cartesian wrist torques onto the translation motors, which
+  // otherwise fight DRD position-hold and produce buzz when roll/pitch
+  // is non-zero. Joint mapping (empirical for Sigma.7): j0=roll, j1=pitch,
+  // j2=yaw. The free axis index follows the same convention as the
+  // Cartesian mode (0=roll, 1=pitch, 2=yaw).
+  bool   wrist_lock_joint_space        = false;
+  double wrist_home_joint[3]           = {0.0, 0.0, 0.0};
+  bool   wrist_joint_homed             = false;
+  double wrist_joint_prev[3]           = {0.0, 0.0, 0.0};
+  double wrist_joint_vel_filt[3]       = {0.0, 0.0, 0.0};
+  // Zero-order-hold the joint-space PD output for kJointHoldTicks ticks
+  // between recomputes. The wrist's mechanical bandwidth is well under
+  // 200 Hz, so the PD doesn't need to update at 2 kHz. Holding the torque
+  // command for ~5 ms breaks the encoder-quantization positive-feedback
+  // limit cycle that sustained the audible buzz: the cycle needs 2 kHz
+  // closed-loop iteration to ring at ~kHz, and ZOH at 200 Hz removes the
+  // bandwidth required to sustain it. Cycle period is determined by
+  // kJointHoldTicks at the 2 kHz haptic loop rate.
+  double wrist_joint_tau_hold[3]       = {0.0, 0.0, 0.0};
+  int    wrist_joint_hold_counter      = 0;
   // Home orientation stored as a 3x3 rotation matrix so the PD error is
   // computed as a rotation vector in world frame — no Euler-axis convention
   // dependence, no gimbal coupling. Initialized to identity; overwritten on

@@ -68,6 +68,18 @@ force_dimension::Node::set_parameters_callback(
       constraints_.wrist_free_axis_filter_alpha = parameter.as_double();
     if (parameter.get_name() == "constraints.wrist_lock.error_deadband_rad")
       constraints_.wrist_lock_error_deadband = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.error_filter_alpha")
+      constraints_.wrist_lock_error_filter_alpha = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.omega_filter_alpha")
+      constraints_.wrist_lock_omega_filter_alpha = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.enabled")
+      constraints_.wrist_lock_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.wrist_lock.joint_space") {
+      constraints_.wrist_lock_joint_space = parameter.as_bool();
+      // Re-home on mode switch so the captured reference is fresh.
+      constraints_.wrist_homed = false;
+      constraints_.wrist_joint_homed = false;
+    }
   }
   return result;
 }

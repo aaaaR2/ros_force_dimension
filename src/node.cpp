@@ -28,6 +28,12 @@
 #include "topics.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
+// Real-time scheduling for the haptic thread.
+#include <pthread.h>
+#include <sched.h>
+#include <cerrno>
+#include <cstring>
+
 // Select namespace.
 // using namespace force_dimension;
 using force_dimension::Node;
@@ -141,6 +147,9 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.free_axis_damping", 0.0);
   declare_parameter<double>("constraints.wrist_lock.free_axis_filter_alpha", 0.2);
   declare_parameter<double>("constraints.wrist_lock.error_deadband_rad", 0.01);
+  declare_parameter<double>("constraints.wrist_lock.error_filter_alpha", 0.15);
+  declare_parameter<double>("constraints.wrist_lock.omega_filter_alpha", 0.15);
+  declare_parameter<bool>("constraints.wrist_lock.joint_space", false);
   // Per-wrist-joint home offsets. SDK joint ordering is hardware-dependent.
   // For the Sigma.7, empirically: slot 3 = roll, 4 = pitch, 5 = yaw.
   // Positive/negative biases the autocenter pose so the participant gets
@@ -430,7 +439,18 @@ void Node::on_activate(void) {
   constraints_.wrist_free_axis_damping = get_parameter("constraints.wrist_lock.free_axis_damping").as_double();
   constraints_.wrist_free_axis_filter_alpha = get_parameter("constraints.wrist_lock.free_axis_filter_alpha").as_double();
   constraints_.wrist_lock_error_deadband = get_parameter("constraints.wrist_lock.error_deadband_rad").as_double();
+  constraints_.wrist_lock_error_filter_alpha = get_parameter("constraints.wrist_lock.error_filter_alpha").as_double();
+  constraints_.wrist_lock_omega_filter_alpha = get_parameter("constraints.wrist_lock.omega_filter_alpha").as_double();
+  constraints_.wrist_lock_joint_space = get_parameter("constraints.wrist_lock.joint_space").as_bool();
   constraints_.wrist_free_axis_omega_filt = 0.0;
+  constraints_.wrist_joint_homed = false;
+  for (int i = 0; i < 3; ++i) {
+    constraints_.wrist_lock_error_filt[i] = 0.0;
+    constraints_.wrist_lock_omega_filt[i] = 0.0;
+    constraints_.wrist_home_joint[i] = 0.0;
+    constraints_.wrist_joint_prev[i] = 0.0;
+    constraints_.wrist_joint_vel_filt[i] = 0.0;
+  }
   constraints_.wrist_homed           = false;
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c)
@@ -476,6 +496,30 @@ void Node::on_activate(void) {
       this->ApplyHapticForce();
     }
   });
+
+  // Promote the haptic thread to real-time priority so the kernel does
+  // not preempt it for normal-priority work (ros2 bag disk I/O, network
+  // RX). Without this, heavy I/O can starve the SDK's microsecond timing
+  // and the DRD regulation thread silently exits ("drop"). Requires
+  // CAP_SYS_NICE — start the launch with `sudo -E` OR run once:
+  //   sudo setcap cap_sys_nice+ep $(which python3) <or the node binary>
+  // If the capability is missing, we log a warning and continue at
+  // SCHED_OTHER (the watchdog will still catch drops).
+  {
+    sched_param sp{};
+    sp.sched_priority = 80;  // SCHED_FIFO range is 1..99; 80 is plenty
+    int rc = pthread_setschedparam(
+        haptic_thread_.native_handle(), SCHED_FIFO, &sp);
+    if (rc == 0) {
+      Log("Haptic loop thread elevated to SCHED_FIFO prio 80");
+    } else {
+      std::string warn = "Could not set SCHED_FIFO on haptic thread (";
+      warn += std::strerror(rc);
+      warn += "); running at default priority. To fix, run with sudo or "
+              "grant CAP_SYS_NICE to the node binary.";
+      Log(warn);
+    }
+  }
   Log("Haptic loop thread started (SDK-paced busy loop)");
 
   // Reset the sample counter.

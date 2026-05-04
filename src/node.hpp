@@ -153,6 +153,24 @@ private:
   rcl_interfaces::msg::SetParametersResult
   set_parameters_callback(const std::vector<rclcpp::Parameter> &);
 
+  // Snapshot of the latest device state captured by the haptic thread.
+  // Read by ROS publish callbacks under state_mutex_ — never call SDK
+  // getters from the executor thread (it contends with the haptic loop's
+  // 2 kHz SDK calls and causes DRD regulation drops, especially when
+  // ROS-TCP-Endpoint serializes messages for Unity).
+  struct DeviceSnapshot {
+    double pos[3] = {0.0, 0.0, 0.0};
+    double vel[3] = {0.0, 0.0, 0.0};
+    double ori_rad[3] = {0.0, 0.0, 0.0};   // wrist Euler angles (rad)
+    double omega[3] = {0.0, 0.0, 0.0};     // angular velocity (rad/s)
+    double gripper_gap_m = 0.0;
+    double gripper_angle_rad = 0.0;
+    int    button_mask = 0;
+    bool   has_orientation = false;
+    bool   has_gripper = false;
+    bool   valid = false;                  // false until first haptic tick lands
+  };
+
 private:
   int device_id_;
   float publication_interval_s_;
@@ -166,6 +184,8 @@ private:
   ConstraintState constraints_;        // cached workspace constraint parameters
   ForceMessage last_force_command_;    // additive external forces (zero-order hold), guarded by force_mutex_
   mutable std::mutex force_mutex_;     // protects last_force_command_ between ROS and haptic threads
+  DeviceSnapshot device_snapshot_;     // populated by haptic thread, read by publish callbacks
+  mutable std::mutex state_mutex_;     // protects device_snapshot_
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr rehome_service_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::thread haptic_thread_;              // SDK-paced haptic loop (tight busy-loop)
