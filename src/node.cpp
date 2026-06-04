@@ -32,6 +32,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 
 // Select namespace.
@@ -93,6 +94,14 @@ void Node::on_configure(void) {
   topic = ORIENTATION_FEEDBACK_TOPIC;
   orientation_publisher_ = create_publisher<OrientationMessage>(topic, qos);
 
+  // Create the raw wrist joint angle publisher (w0,w1,w2 in rad).
+  topic = WRIST_JOINT_FEEDBACK_TOPIC;
+  wrist_joint_publisher_ = create_publisher<WristJointMessage>(topic, qos);
+
+  // Create the end-effector orientation quaternion publisher.
+  topic = ORIENTATION_QUAT_FEEDBACK_TOPIC;
+  orientation_quat_publisher_ = create_publisher<OrientationQuatMessage>(topic, qos);
+
   // Create the synchronized device state publisher.
   topic = DEVICE_STATE_FEEDBACK_TOPIC;
   device_state_publisher_ = create_publisher<DeviceStateMessage>(topic, qos);
@@ -111,6 +120,8 @@ void Node::on_configure(void) {
   declare_parameter<int>("feedback_sample_decimation.gripper_gap", 50);
   declare_parameter<int>("feedback_sample_decimation.gripper_angle", 50);
   declare_parameter<int>("feedback_sample_decimation.orientation", 50);
+  declare_parameter<int>("feedback_sample_decimation.orientation_quat", 50);
+  declare_parameter<int>("feedback_sample_decimation.wrist_joint_angles", 50);
   declare_parameter<int>("feedback_sample_decimation.state", 50);
   declare_parameter<bool>("device_state_metrics.include_position", true);
   declare_parameter<bool>("device_state_metrics.include_velocity", true);
@@ -138,6 +149,41 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.stiffness", 2000.0);
   declare_parameter<double>("constraints.damping", 50.0);
 
+  // Translation position hold (force-mode primary translation hold). Bilateral
+  // spring+damper to the captured home with a per-axis force cap (SDK hold
+  // pattern) — use this instead of the channel walls when DRD regulation is off.
+  declare_parameter<bool>("constraints.translation_hold.enabled", false);
+  declare_parameter<double>("constraints.translation_hold.stiffness", 150.0);
+  declare_parameter<double>("constraints.translation_hold.damping", 25.0);
+  declare_parameter<double>("constraints.translation_hold.max_force", 5.0);
+
+  // Circular track ("ring") guide: confine the effector to a circle of radius
+  // ring.radius in the plane orthogonal to ring.height_axis (default Z), free to
+  // orbit, height locked. Force-mode primary translation constraint.
+  declare_parameter<bool>("constraints.ring.enabled", false);
+  declare_parameter<double>("constraints.ring.radius", 0.04);
+  declare_parameter<int>("constraints.ring.height_axis", 2);
+  declare_parameter<double>("constraints.ring.stiffness", 300.0);
+  declare_parameter<double>("constraints.ring.damping", 30.0);
+  declare_parameter<double>("constraints.ring.max_force", 6.0);
+  declare_parameter<double>("constraints.ring.center_deadzone", 0.005);
+  // Ring center planar offset from the autocenter home (the "central cylinder"
+  // offset), along the two in-plane axes; and optional start-on-rim placement.
+  declare_parameter<double>("constraints.ring.center_offset_0", 0.0);
+  declare_parameter<double>("constraints.ring.center_offset_1", 0.0);
+  declare_parameter<bool>("constraints.ring.start_on_rim", false);
+  declare_parameter<double>("constraints.ring.start_angle_rad", 0.0);
+
+  // Clean wrist upright lock (ring design principles: SDK joint velocity,
+  // bilateral PD, capped, no decimation). Holds all 3 wrist joints upright.
+  declare_parameter<bool>("constraints.wrist_upright.enabled", false);
+  declare_parameter<double>("constraints.wrist_upright.stiffness", 0.6);
+  declare_parameter<double>("constraints.wrist_upright.damping", 0.04);
+  declare_parameter<double>("constraints.wrist_upright.max_torque", 0.02);
+  declare_parameter<double>("constraints.wrist_upright.vel_filter_alpha", 1.0);
+  declare_parameter<int>("constraints.wrist_upright.free_axis", -1);
+  declare_parameter<double>("constraints.wrist_upright.free_axis_damping", 0.0);
+
   // Wrist orientation lock: PD on two of three Cartesian rotation axes,
   // leaves the third (default: Z/yaw) free. Applies in the 2 kHz loop.
   declare_parameter<bool>("constraints.wrist_lock.enabled", false);
@@ -158,6 +204,19 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.home_joint_1_rad", 0.0);
   declare_parameter<double>("constraints.wrist_lock.home_joint_2_rad", 0.0);
 
+  // Wrist lock MODE: rotate the locked roll setpoint to one of three poses.
+  //   upright -> roll offset 0 (captured neutral)
+  //   left    -> roll offset roll_offset_left_rad
+  //   right   -> roll offset roll_offset_right_rad
+  // Switchable live via /robot/wrist_lock/set_mode (std_msgs/String) or this
+  // `mode` parameter. The applied offset slews at roll_slew_rate_rad_s and is
+  // clamped into the device's measured roll range minus roll_range_margin_rad.
+  declare_parameter<std::string>("constraints.wrist_lock.mode", "upright");
+  declare_parameter<double>("constraints.wrist_lock.roll_offset_left_rad", -1.40);
+  declare_parameter<double>("constraints.wrist_lock.roll_offset_right_rad", 1.40);
+  declare_parameter<double>("constraints.wrist_lock.roll_slew_rate_rad_s", 0.5);
+  declare_parameter<double>("constraints.wrist_lock.roll_range_margin_rad", 0.05);
+
   // Selective DRD actuator regulation. Defaults preserve legacy behaviour:
   // translation regulated during homing then released; wrist regulated iff the
   // device has an active wrist; gripper never auto-centred.
@@ -175,14 +234,32 @@ void Node::on_configure(void) {
   // instead of overwriting it each tick (which causes motor chatter).
   declare_parameter<bool>("haptic_loop.use_drd_api", false);
 
+  // Force-mode hold: stop DRD regulation after centering and hold all axes via
+  // dhd* force functions in the 2 kHz loop (SDK hold/sphere example pattern).
+  // Default true. NOTE: a launch using force mode MUST provide its own
+  // translation hold (channel constraints), else translation is left free once
+  // DRD regulation stops. The unity_sigma_controller launch helper pins this
+  // false for tasks that rely on DRD translation hold; wrist_flexion overrides
+  // it true and supplies channel springs.
+  declare_parameter<bool>("haptic_loop.force_mode", true);
+
   // Create the force control subcription.
   SubscribeForce();
+
+  // Subscribe to wrist lock-mode commands (upright/left/right) and advertise
+  // the active mode for Unity feedback.
+  SubscribeWristMode();
+  wrist_mode_publisher_ =
+      create_publisher<WristModeMessage>(WRIST_MODE_FEEDBACK_TOPIC, DefaultQoS());
 
   // Advertise rehome service — resets constraint homing on the next 2 kHz tick.
   rehome_service_ = create_service<std_srvs::srv::Trigger>(
       "~/rehome_constraints",
       std::bind(&Node::rehome_constraints_callback, this,
                 std::placeholders::_1, std::placeholders::_2));
+
+  // Mark configured so ~Node()/on_error() run on_cleanup() on shutdown.
+  configured_ = true;
 }
 
 /** Activates the ROS node by initializing the Force Dimension interface and
@@ -194,6 +271,11 @@ void Node::on_activate(void) {
   // This is done once, at the time of activation, and stored in a member
   // variable while active.
   get_parameter("disable_hardware", hardware_disabled_);
+
+  // Cache force-mode EARLY: the device init below (Phase 2) branches on it to
+  // decide whether to drdStop() after centering. It must be read before that
+  // point, not later with the other haptic-loop params.
+  force_mode_ = get_parameter("haptic_loop.force_mode").as_bool();
 
   // Open device, autocenter, and enable expert mode for joint torque control.
   // Follows the hold.cpp + autocenter.cpp SDK example pattern.
@@ -236,6 +318,40 @@ void Node::on_activate(void) {
 
     // Stop any running regulation so we can reconfigure regulate flags.
     drdStop(false);
+
+    // Read the device's per-joint angle range so the wrist lock-mode offset can
+    // be clamped to the hardware's actual safe roll travel instead of a fixed
+    // guess. dhdGetJointAngleRange returns DHD_MAX_DOF arrays indexed by global
+    // joint slot; for the Sigma.7, slot 3 = roll (matches positionCenter[3] and
+    // the empirical j0=roll mapping used by the 2 kHz PD). Range is pose
+    // independent, so reading it here (before autocenter) is fine.
+    constexpr int kRollGlobalJoint = 3;
+    constexpr int kPitchGlobalJoint = 4;
+    constexpr int kYawGlobalJoint = 5;
+    constexpr double kRad2Deg = 57.29577951308232;
+    constraints_.wrist_roll_range_valid = false;
+    {
+      double jmin[DHD_MAX_DOF] = {};
+      double jmax[DHD_MAX_DOF] = {};
+      if (dhdGetJointAngleRange(jmin, jmax, device_id_) >= 0) {
+        constraints_.wrist_roll_min = jmin[kRollGlobalJoint];
+        constraints_.wrist_roll_max = jmax[kRollGlobalJoint];
+        constraints_.wrist_roll_range_valid = true;
+        std::string message = "Wrist joint range (rad / deg): roll=[";
+        message += std::to_string(jmin[kRollGlobalJoint]) + ", " +
+                   std::to_string(jmax[kRollGlobalJoint]) + "] / [" +
+                   std::to_string(jmin[kRollGlobalJoint] * kRad2Deg) + ", " +
+                   std::to_string(jmax[kRollGlobalJoint] * kRad2Deg) + "]  pitch=[" +
+                   std::to_string(jmin[kPitchGlobalJoint]) + ", " +
+                   std::to_string(jmax[kPitchGlobalJoint]) + "]  yaw=[" +
+                   std::to_string(jmin[kYawGlobalJoint]) + ", " +
+                   std::to_string(jmax[kYawGlobalJoint]) + "]";
+        Log(message);
+      } else {
+        Log("Could not read wrist joint angle range; roll lock-mode offset will "
+            "slew unclamped (no hardware range check).");
+      }
+    }
 
     // Phase 1 — autocenter: ALWAYS regulate all available axes regardless of
     // the user's final actuators.regulate_* preferences. This guarantees the
@@ -299,6 +415,36 @@ void Node::on_activate(void) {
       positionCenter[4] = j1;
       positionCenter[5] = j2;
 
+      // Ring guide: record the ring center (= autocenter base + planar offset)
+      // and, if requested, move the device ONTO the rim at startup instead of
+      // leaving it at the center. The center is the "central cylinder" axis; its
+      // offset and the radius are exposed as parameters.
+      if (get_parameter("constraints.ring.enabled").as_bool()) {
+        const int rh  = get_parameter("constraints.ring.height_axis").as_int();
+        const int ra0 = (rh == 0) ? 1 : 0;   // first in-plane axis
+        const int ra1 = (rh == 2) ? 1 : 2;   // second in-plane axis
+        const double R   = get_parameter("constraints.ring.radius").as_double();
+        const double cc0 = positionCenter[ra0] +
+            get_parameter("constraints.ring.center_offset_0").as_double();
+        const double cc1 = positionCenter[ra1] +
+            get_parameter("constraints.ring.center_offset_1").as_double();
+        constraints_.ring_center[0] = cc0;
+        constraints_.ring_center[1] = cc1;
+        constraints_.ring_center_valid = true;
+        const bool start_on_rim =
+            get_parameter("constraints.ring.start_on_rim").as_bool();
+        if (start_on_rim) {
+          const double sa = get_parameter("constraints.ring.start_angle_rad").as_double();
+          positionCenter[ra0] = clamp(cc0 + R * std::cos(sa), -kMaxOffsetM, kMaxOffsetM);
+          positionCenter[ra1] = clamp(cc1 + R * std::sin(sa), -kMaxOffsetM, kMaxOffsetM);
+        }
+        std::string message = "Ring guide: center=(";
+        message += std::to_string(cc0) + ", " + std::to_string(cc1);
+        message += ") radius=" + std::to_string(R);
+        message += start_on_rim ? " (start ON rim)" : " (start at center)";
+        Log(message);
+      }
+
       {
         std::string message = "Moving to startup position: axis";
         message += std::to_string(ax0) + "=" + std::to_string(off0);
@@ -321,32 +467,52 @@ void Node::on_activate(void) {
     // hold at runtime. The 2 kHz force loop owns any released axis.
     // When nothing is held, this matches the legacy drdStop(true) behaviour
     // used by Task 3 / pong launches.
-    const bool hold_pos = get_parameter("actuators.hold_pos").as_bool();
-    const bool hold_rot = get_parameter("actuators.hold_rot").as_bool();
-    const bool hold_grip_param = get_parameter("actuators.hold_grip").as_bool();
-    const bool reg_grip_param = get_parameter("actuators.regulate_grip").as_bool();
-    // Only honor hold_grip if the launch file also asked to regulate the grip
-    // (legacy launches default regulate_grip=false — keep them untouched).
-    const bool hold_grip = hold_grip_param && reg_grip_param;
-    if (!hold_pos) drdRegulatePos(false);
-    if (!hold_rot) drdRegulateRot(false);
-    if (hold_grip) drdRegulateGrip(true);   // engage grip regulation for held grip
-    else           drdRegulateGrip(false);
-    if (!hold_pos && !hold_rot && !hold_grip) {
+    if (force_mode_) {
+      // Force-mode (SDK hold/sphere pattern): regulation only served to center
+      // the device above. Release every axis and STOP the regulation thread —
+      // forces stay enabled. From here the 2 kHz dhd force loop holds everything:
+      // translation via channel constraints, wrist via the joint-space PD, and
+      // gripper via the fg spring. With no regulation thread there is nothing
+      // for high-rate force writes to "take over", so no drop/restart cycle.
+      drdRegulatePos(false);
+      drdRegulateRot(false);
+      drdRegulateGrip(false);
       if (drdStop(true) < 0) {
-        std::string message = "Cannot stop DRD regulation: ";
+        std::string message = "Cannot stop DRD regulation (force mode): ";
         message += dhdErrorGetLastStr();
         Log(message);
         on_error();
+      } else {
+        Log("Force mode: DRD regulation stopped after centering; forces enabled.");
       }
     } else {
-      std::string message = "DRD holding actuators: pos=";
-      message += hold_pos ? "1" : "0";
-      message += " rot=";
-      message += hold_rot ? "1" : "0";
-      message += " grip=";
-      message += hold_grip ? "1" : "0";
-      Log(message);
+      const bool hold_pos = get_parameter("actuators.hold_pos").as_bool();
+      const bool hold_rot = get_parameter("actuators.hold_rot").as_bool();
+      const bool hold_grip_param = get_parameter("actuators.hold_grip").as_bool();
+      const bool reg_grip_param = get_parameter("actuators.regulate_grip").as_bool();
+      // Only honor hold_grip if the launch file also asked to regulate the grip
+      // (legacy launches default regulate_grip=false — keep them untouched).
+      const bool hold_grip = hold_grip_param && reg_grip_param;
+      if (!hold_pos) drdRegulatePos(false);
+      if (!hold_rot) drdRegulateRot(false);
+      if (hold_grip) drdRegulateGrip(true);   // engage grip regulation for held grip
+      else           drdRegulateGrip(false);
+      if (!hold_pos && !hold_rot && !hold_grip) {
+        if (drdStop(true) < 0) {
+          std::string message = "Cannot stop DRD regulation: ";
+          message += dhdErrorGetLastStr();
+          Log(message);
+          on_error();
+        }
+      } else {
+        std::string message = "DRD holding actuators: pos=";
+        message += hold_pos ? "1" : "0";
+        message += " rot=";
+        message += hold_rot ? "1" : "0";
+        message += " grip=";
+        message += hold_grip ? "1" : "0";
+        Log(message);
+      }
     }
 
     // Store gripper gap at natural resting position as the home target.
@@ -428,6 +594,25 @@ void Node::on_activate(void) {
   constraints_.home_offset[1]              = get_parameter("constraints.home_offset_1").as_double();
   constraints_.stiffness             = get_parameter("constraints.stiffness").as_double();
   constraints_.damping               = get_parameter("constraints.damping").as_double();
+  constraints_.translation_hold_enabled   = get_parameter("constraints.translation_hold.enabled").as_bool();
+  constraints_.translation_hold_stiffness = get_parameter("constraints.translation_hold.stiffness").as_double();
+  constraints_.translation_hold_damping   = get_parameter("constraints.translation_hold.damping").as_double();
+  constraints_.translation_hold_max_force = get_parameter("constraints.translation_hold.max_force").as_double();
+  constraints_.ring_enabled          = get_parameter("constraints.ring.enabled").as_bool();
+  constraints_.ring_radius           = get_parameter("constraints.ring.radius").as_double();
+  constraints_.ring_height_axis      = get_parameter("constraints.ring.height_axis").as_int();
+  constraints_.ring_stiffness        = get_parameter("constraints.ring.stiffness").as_double();
+  constraints_.ring_damping          = get_parameter("constraints.ring.damping").as_double();
+  constraints_.ring_max_force        = get_parameter("constraints.ring.max_force").as_double();
+  constraints_.ring_center_deadzone  = get_parameter("constraints.ring.center_deadzone").as_double();
+  constraints_.wrist_upright_enabled    = get_parameter("constraints.wrist_upright.enabled").as_bool();
+  constraints_.wrist_upright_stiffness  = get_parameter("constraints.wrist_upright.stiffness").as_double();
+  constraints_.wrist_upright_damping    = get_parameter("constraints.wrist_upright.damping").as_double();
+  constraints_.wrist_upright_max_torque = get_parameter("constraints.wrist_upright.max_torque").as_double();
+  constraints_.wrist_upright_vel_filter_alpha = get_parameter("constraints.wrist_upright.vel_filter_alpha").as_double();
+  constraints_.wrist_upright_free_axis = get_parameter("constraints.wrist_upright.free_axis").as_int();
+  constraints_.wrist_upright_free_axis_damping = get_parameter("constraints.wrist_upright.free_axis_damping").as_double();
+  constraints_.wrist_upright_homed   = false;
   constraints_.homed                 = false;
   for (int i = 0; i < 3; ++i) constraints_.channel_offset[i] = 0.0;
   constraints_.circle_center[0]      = 0.0;
@@ -466,9 +651,43 @@ void Node::on_activate(void) {
     Log(message);
   }
 
+  // Wrist lock-mode (upright/left/right) configuration. The slew rate + margin
+  // live in the constraint struct (read by the haptic loop); the left/right
+  // offsets are cached on the node so mode_to_offset() can map a mode string.
+  constraints_.wrist_roll_slew_rate =
+      get_parameter("constraints.wrist_lock.roll_slew_rate_rad_s").as_double();
+  constraints_.wrist_roll_range_margin =
+      get_parameter("constraints.wrist_lock.roll_range_margin_rad").as_double();
+  wrist_roll_offset_left_ =
+      get_parameter("constraints.wrist_lock.roll_offset_left_rad").as_double();
+  wrist_roll_offset_right_ =
+      get_parameter("constraints.wrist_lock.roll_offset_right_rad").as_double();
+  // Set the initial target offset from the `mode` parameter. The haptic loop
+  // slews the applied offset from 0 (upright) toward this after first homing.
+  {
+    const std::string mode =
+        get_parameter("constraints.wrist_lock.mode").as_string();
+    const double offset = mode_to_offset(mode);
+    wrist_roll_offset_target_.store(offset);
+    std::string message = "Wrist lock initial mode: " + mode +
+        " (roll offset " + std::to_string(offset) + " rad, slew " +
+        std::to_string(constraints_.wrist_roll_slew_rate) + " rad/s)";
+    Log(message);
+    // Roll (joint 0) must be a LOCKED axis for the offset to take effect; if
+    // it is the free axis the offset is silently ignored, so warn loudly.
+    if (offset != 0.0 && constraints_.wrist_lock_free_axis == 0) {
+      Log("WARNING: wrist_lock free_axis=0 (roll) but a non-upright mode is "
+          "set — the roll offset will be ignored because roll is free.");
+    }
+  }
+
   // Cache which SDK force API the 2 kHz loop should use.
   haptic_use_drd_api_ = get_parameter("haptic_loop.use_drd_api").as_bool();
-  if (haptic_use_drd_api_) {
+  // force_mode_ was already cached at the top of on_activate (Phase 2 needs it).
+  if (force_mode_) {
+    Log("Haptic loop: FORCE MODE — DRD regulation stopped after centering; "
+        "all axes held via dhd* force functions (no regulation thread).");
+  } else if (haptic_use_drd_api_) {
     Log("Haptic loop: using drd* force API (composes with DRD regulation)");
   }
   {
@@ -553,6 +772,12 @@ void Node::on_activate(void) {
       std::bind(&Node::set_parameters_callback, this, std::placeholders::_1);
   parameters_callback_handle_ =
       this->add_on_set_parameters_callback(parameters_callback);
+
+  // Mark active so ~Node()/on_error() run on_deactivate() on shutdown:
+  // this joins the haptic thread and closes the device. Without it the
+  // joinable std::thread is destroyed -> std::terminate -> abort (exit -6),
+  // which appears as "terminate called without an active exception".
+  active_ = true;
 }
 
 /**

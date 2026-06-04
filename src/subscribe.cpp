@@ -42,6 +42,48 @@ void Node::force_callback(const ForceMessage message) {
   last_force_command_ = message;
 }
 
+// Subscribes to wrist lock-mode commands. Unity (or the CLI) publishes a
+// std_msgs/String with value "upright" | "left" | "right" to switch the locked
+// roll orientation live. Resolves to /robot/wrist_lock/set_mode under the node
+// namespace, mirroring command/force.
+void Node::SubscribeWristMode(void) {
+  auto callback = [this](WristModeMessage m) { this->wrist_mode_callback(m); };
+  auto topic = WRIST_MODE_COMMAND_TOPIC;
+  auto qos = DefaultQoS();
+  wrist_mode_subscription_ =
+      this->create_subscription<WristModeMessage>(topic, qos, callback);
+}
+
+// Maps a lock-mode string to a roll offset (rad) relative to the captured
+// upright neutral. Unknown strings are treated as upright (offset 0) with a
+// warning so a typo can never silently leave the wrist in a stale offset.
+double Node::mode_to_offset(const std::string &mode) const {
+  if (mode == "upright") return 0.0;
+  if (mode == "left")    return wrist_roll_offset_left_;
+  if (mode == "right")   return wrist_roll_offset_right_;
+  return 0.0;
+}
+
+// Stores the latest wrist lock mode by retargeting the slewed roll offset.
+// The haptic loop slews the applied offset toward this target; it never steps.
+void Node::wrist_mode_callback(const WristModeMessage message) {
+  const std::string mode = message.data;
+  if (mode != "upright" && mode != "left" && mode != "right") {
+    Log("Wrist lock: ignoring unknown mode '" + mode +
+        "' (expected upright|left|right)");
+    return;
+  }
+  const double offset = mode_to_offset(mode);
+  wrist_roll_offset_target_.store(offset);
+  Log("Wrist lock mode -> " + mode + " (roll offset target " +
+      std::to_string(offset) + " rad)");
+  if (wrist_mode_publisher_) {
+    WristModeMessage feedback;
+    feedback.data = mode;
+    wrist_mode_publisher_->publish(feedback);
+  }
+}
+
 // Applies workspace constraint forces + external commands to the device at 2 kHz.
 // Reads position and velocity directly from the SDK each iteration — no ROS transport.
 // External force commands (last_force_command_) are added on top of constraint forces.
@@ -53,8 +95,11 @@ void Node::ApplyHapticForce(void) {
   // few seconds when we drive it with drdSetForce* at high rate (the SDK
   // interprets the override as "caller is regulating now"). Detect and
   // restart, logging once per drop so we know if restarts start failing.
+  // In force mode the regulation thread is intentionally stopped (drdStop in
+  // on_activate), so drdIsRunning() is always false — skip the watchdog entirely,
+  // otherwise it would spin trying to restart regulation every tick.
   static int drd_drop_count = 0;
-  if (!drdIsRunning()) {
+  if (!force_mode_ && !drdIsRunning()) {
     ++drd_drop_count;
     const char *err_str = dhdErrorGetLastStr();
     std::string message = "DRD regulation thread stopped (drop #";
@@ -106,6 +151,24 @@ void Node::ApplyHapticForce(void) {
   double cf[3] = {};
   ComputeConstraintForce(pos, vel, cf);
 
+  // Force-mode translation hold: a bilateral spring+damper to the captured home
+  // (channel_offset, set by the auto-home in ComputeConstraintForce above), with
+  // a per-axis force cap. This is the SDK hold-example pattern. Unlike the
+  // channel walls — which damp outward motion only and therefore limit-cycle
+  // when used as a continuous hold — the continuous (both-directions) damping
+  // here dissipates overshoot, so translation is held smoothly without buzz.
+  if (constraints_.translation_hold_enabled && constraints_.homed) {
+    const double Kp = constraints_.translation_hold_stiffness;
+    const double Kv = constraints_.translation_hold_damping;
+    const double fmax = constraints_.translation_hold_max_force;
+    for (int i = 0; i < 3; ++i) {
+      double f = -Kp * (pos[i] - constraints_.channel_offset[i]) - Kv * vel[i];
+      if (f >  fmax) f =  fmax;
+      if (f < -fmax) f = -fmax;
+      cf[i] += f;
+    }
+  }
+
   // Sum constraint forces with any external force command (zero-order hold).
   // Copy under lock to avoid data race with force_callback on the ROS thread.
   ForceMessage cmd;
@@ -124,7 +187,52 @@ void Node::ApplyHapticForce(void) {
   // drd getters to save USB transactions — just run the PD here.
   double wrist_tau[3] = {0.0, 0.0, 0.0};   // Cartesian wrist torque (world frame)
   double wrist_joint_tau[3] = {0.0, 0.0, 0.0};  // joint-space wrist torque
-  if (constraints_.wrist_lock_enabled &&
+  if (constraints_.wrist_upright_enabled) {
+    // Clean upright lock — same design principles as the ring constraint:
+    // force-mode, bilateral spring+damper, damping on the SDK's MEASURED joint
+    // velocity (rate-independent: no finite-difference, no decimation/ZOH, no
+    // LPF), torque-capped. Holds all three wrist joints at the captured upright
+    // pose. Overdamped gains (per SDK hold.cpp) so it cannot buzz.
+    double j_now[3] = {0.0, 0.0, 0.0};
+    double jvel[DHD_MAX_DOF] = {};
+    dhdGetWristJointAngles(&j_now[0], &j_now[1], &j_now[2], device_id_);
+    dhdGetJointVelocities(jvel, device_id_);  // slots 3,4,5 = wrist roll/pitch/yaw
+    if (!constraints_.wrist_upright_homed) {
+      for (int i = 0; i < 3; ++i) {
+        constraints_.wrist_upright_home[i] = j_now[i];
+        constraints_.wrist_upright_omega_filt[i] = 0.0;  // reset filter on home
+      }
+      constraints_.wrist_upright_homed = true;
+    }
+    const double Kp_u = constraints_.wrist_upright_stiffness;
+    const double Kv_u = constraints_.wrist_upright_damping;
+    const double tmax = constraints_.wrist_upright_max_torque;
+    // Optional first-order LPF on the (noisy over WSL/usbipd) joint velocity.
+    // alpha 1.0 = raw (no filter); lower = smoother. Kills the torque chatter
+    // that heavy Kv injects from velocity-sensor noise.
+    double a_u = constraints_.wrist_upright_vel_filter_alpha;
+    if (a_u < 0.0) a_u = 0.0;
+    if (a_u > 1.0) a_u = 1.0;
+    const int free_ax = constraints_.wrist_upright_free_axis;
+    const double b_free = constraints_.wrist_upright_free_axis_damping;
+    for (int i = 0; i < 3; ++i) {
+      constraints_.wrist_upright_omega_filt[i] =
+          a_u * jvel[3 + i] +
+          (1.0 - a_u) * constraints_.wrist_upright_omega_filt[i];
+      double t;
+      if (i == free_ax) {
+        // Released axis: viscous damping only, no position lock (e.g. yaw for
+        // the wrist-flexion case). b_free can be ramped by damping_progression.
+        t = -b_free * constraints_.wrist_upright_omega_filt[i];
+      } else {
+        t = -Kp_u * (j_now[i] - constraints_.wrist_upright_home[i])
+            - Kv_u * constraints_.wrist_upright_omega_filt[i];
+      }
+      if (t >  tmax) t =  tmax;
+      if (t < -tmax) t = -tmax;
+      wrist_joint_tau[i] = t;
+    }
+  } else if (constraints_.wrist_lock_enabled &&
       constraints_.wrist_lock_joint_space) {
     // Joint-space PD with zero-order-hold decimation. The PD output is
     // recomputed every kJointHoldTicks ticks (default 10 -> 200 Hz) and
@@ -151,6 +259,11 @@ void Node::ApplyHapticForce(void) {
       }
       constraints_.wrist_joint_hold_counter = 0;
       constraints_.wrist_joint_homed = true;
+      // Capture the upright neutral roll and start the offset at zero. The
+      // applied offset then slews from here toward whatever mode is selected,
+      // so the very first activation never jumps the roll setpoint.
+      constraints_.wrist_neutral_roll = j_now[0];
+      constraints_.wrist_roll_offset_current = 0.0;
     }
 
     // Decimated PD recompute. Otherwise the held torque from last compute
@@ -173,6 +286,36 @@ void Node::ApplyHapticForce(void) {
       constexpr double kJointVelQuant = 0.10;     // rad/s (~5.7 deg/s)
       constexpr double kJointSilenceTau = 0.010;  // N·m
       constexpr double kJointSilenceVel = 0.10;   // rad/s
+
+      // --- Roll lock-mode offset: slew toward target, clamp to safe range ---
+      // Runs once per decimated recompute (200 Hz, kDecimatedDt) so the slew
+      // rate stays in rad/s. The roll setpoint below becomes
+      //   wrist_home_joint[0] + wrist_roll_offset_current.
+      // Slewing bounds the *rate* of torque rise (Kp*slew_rate), so a mode
+      // switch ramps in smoothly instead of stepping (a step would apply
+      // Kp*offset N*m to the wrist instantly).
+      {
+        double tgt = wrist_roll_offset_target_.load();
+        // Keep the resulting roll setpoint inside the device's measured joint
+        // range (minus a margin). Offsets are relative to the captured neutral,
+        // so shift the absolute limits by the neutral to get offset bounds.
+        if (constraints_.wrist_roll_range_valid) {
+          const double lo = (constraints_.wrist_roll_min +
+                             constraints_.wrist_roll_range_margin) -
+                             constraints_.wrist_neutral_roll;
+          const double hi = (constraints_.wrist_roll_max -
+                             constraints_.wrist_roll_range_margin) -
+                             constraints_.wrist_neutral_roll;
+          if (tgt < lo) tgt = lo;
+          if (tgt > hi) tgt = hi;
+        }
+        const double step = constraints_.wrist_roll_slew_rate * kDecimatedDt;
+        double delta = tgt - constraints_.wrist_roll_offset_current;
+        if (delta >  step) delta =  step;
+        if (delta < -step) delta = -step;
+        constraints_.wrist_roll_offset_current += delta;
+      }
+
       for (int i = 0; i < 3; ++i) {
         double dj = (j_now[i] - constraints_.wrist_joint_prev[i]) / kDecimatedDt;
         constraints_.wrist_joint_prev[i] = j_now[i];
@@ -183,7 +326,13 @@ void Node::ApplyHapticForce(void) {
           constraints_.wrist_joint_tau_hold[i] = -b_free_j * dj;
           continue;
         }
-        double err = j_now[i] - constraints_.wrist_home_joint[i];
+        // Roll (i==0) is offset by the slewed lock-mode offset; pitch holds at
+        // its captured neutral. The offset is zero in upright mode.
+        const double setpoint =
+            (i == 0) ? constraints_.wrist_home_joint[i] +
+                           constraints_.wrist_roll_offset_current
+                     : constraints_.wrist_home_joint[i];
+        double err = j_now[i] - setpoint;
         if (std::abs(err) < err_dz) err = 0.0;
         double mag = std::abs(err);
         double spring = 0.0;
@@ -395,6 +544,10 @@ void Node::ApplyHapticForce(void) {
   bool    update_slow_fields = false;
   int     button_mask_snap = 0;
   double  gripper_angle_snap = 0.0;
+  double  wrist_joint_snap[3] = {0.0, 0.0, 0.0};  // raw joint angles w0,w1,w2 (rad)
+  double  ori_rad_snap[3] = {0.0, 0.0, 0.0};      // end-effector Euler (rad)
+  double  quat_snap[4] = {0.0, 0.0, 0.0, 1.0};    // orientation quaternion (x,y,z,w)
+  bool    ori_snap_valid = false;
   bool    has_gripper_snap = (!hardware_disabled_) && dhdHasGripper(device_id_);
   if (++snapshot_decim >= 20) {
     snapshot_decim = 0;
@@ -403,6 +556,48 @@ void Node::ApplyHapticForce(void) {
       button_mask_snap = dhdGetButtonMask(device_id_);
       if (has_gripper_snap) {
         dhdGetGripperAngleRad(&gripper_angle_snap, device_id_);
+      }
+      // Raw wrist joint angles for recording (w0=roll, w1=pitch, w2=yaw).
+      // Read here (~100 Hz) so they are always recorded, regardless of whether
+      // a wrist lock is active. Slow-changing, so the decimated rate is plenty.
+      dhdGetWristJointAngles(&wrist_joint_snap[0], &wrist_joint_snap[1],
+                             &wrist_joint_snap[2], device_id_);
+      // End-effector orientation, captured here so it is recorded in EVERY mode
+      // (the per-tick wrist_lock path only runs when that lock is active). Euler
+      // for the existing field; rotation matrix -> quaternion for the quat topic.
+      dhdGetOrientationRad(&ori_rad_snap[0], &ori_rad_snap[1], &ori_rad_snap[2],
+                           device_id_);
+      double Rm[3][3] = {};
+      if (dhdGetOrientationFrame(Rm, device_id_) >= 0) {
+        const double tr = Rm[0][0] + Rm[1][1] + Rm[2][2];
+        double qx, qy, qz, qw;
+        if (tr > 0.0) {
+          double s = 0.5 / std::sqrt(tr + 1.0);
+          qw = 0.25 / s;
+          qx = (Rm[2][1] - Rm[1][2]) * s;
+          qy = (Rm[0][2] - Rm[2][0]) * s;
+          qz = (Rm[1][0] - Rm[0][1]) * s;
+        } else if (Rm[0][0] > Rm[1][1] && Rm[0][0] > Rm[2][2]) {
+          double s = 2.0 * std::sqrt(1.0 + Rm[0][0] - Rm[1][1] - Rm[2][2]);
+          qw = (Rm[2][1] - Rm[1][2]) / s;
+          qx = 0.25 * s;
+          qy = (Rm[0][1] + Rm[1][0]) / s;
+          qz = (Rm[0][2] + Rm[2][0]) / s;
+        } else if (Rm[1][1] > Rm[2][2]) {
+          double s = 2.0 * std::sqrt(1.0 + Rm[1][1] - Rm[0][0] - Rm[2][2]);
+          qw = (Rm[0][2] - Rm[2][0]) / s;
+          qx = (Rm[0][1] + Rm[1][0]) / s;
+          qy = 0.25 * s;
+          qz = (Rm[1][2] + Rm[2][1]) / s;
+        } else {
+          double s = 2.0 * std::sqrt(1.0 + Rm[2][2] - Rm[0][0] - Rm[1][1]);
+          qw = (Rm[1][0] - Rm[0][1]) / s;
+          qx = (Rm[0][2] + Rm[2][0]) / s;
+          qy = (Rm[1][2] + Rm[2][1]) / s;
+          qz = 0.25 * s;
+        }
+        quat_snap[0] = qx; quat_snap[1] = qy; quat_snap[2] = qz; quat_snap[3] = qw;
+        ori_snap_valid = true;
       }
     }
   }
@@ -428,6 +623,24 @@ void Node::ApplyHapticForce(void) {
     if (update_slow_fields) {
       device_snapshot_.button_mask = button_mask_snap;
       device_snapshot_.gripper_angle_rad = gripper_angle_snap;
+      if (!hardware_disabled_) {
+        device_snapshot_.wrist_joint_rad[0] = wrist_joint_snap[0];
+        device_snapshot_.wrist_joint_rad[1] = wrist_joint_snap[1];
+        device_snapshot_.wrist_joint_rad[2] = wrist_joint_snap[2];
+        device_snapshot_.has_wrist_joint = true;
+      }
+      if (ori_snap_valid) {
+        // Mode-independent orientation capture (Euler + quaternion), so it is
+        // recorded even when no per-tick wrist-lock path is reading orientation.
+        device_snapshot_.ori_rad[0] = ori_rad_snap[0];
+        device_snapshot_.ori_rad[1] = ori_rad_snap[1];
+        device_snapshot_.ori_rad[2] = ori_rad_snap[2];
+        device_snapshot_.quat[0] = quat_snap[0];
+        device_snapshot_.quat[1] = quat_snap[1];
+        device_snapshot_.quat[2] = quat_snap[2];
+        device_snapshot_.quat[3] = quat_snap[3];
+        device_snapshot_.has_orientation = true;
+      }
     }
     device_snapshot_.valid = true;
   }
@@ -458,7 +671,8 @@ void Node::ApplyHapticForce(void) {
   constexpr double kIdleForceN = 0.005;         // 5 mN
   constexpr double kIdleTorqueNm = 0.005;       // 5 mN·m
   const bool joint_space_active =
-      constraints_.wrist_lock_enabled && constraints_.wrist_lock_joint_space;
+      constraints_.wrist_upright_enabled ||
+      (constraints_.wrist_lock_enabled && constraints_.wrist_lock_joint_space);
   const bool joint_torques_idle =
       std::abs(wrist_joint_tau[0]) < kIdleTorqueNm &&
       std::abs(wrist_joint_tau[1]) < kIdleTorqueNm &&
@@ -475,16 +689,25 @@ void Node::ApplyHapticForce(void) {
   if (joint_space_active) {
     // Joint-space mode: route the PD output as wrist joint torques so the
     // SDK does not project them through the Jacobian onto the translation
-    // motors (which would fight DRD position hold). External Cartesian
-    // wrench torques are dropped in this mode — Unity / Python publishers
-    // that need to drive the wrist must switch to joint-space too. The
-    // drd* variant composes additively with DRD's translation regulation.
-    result = drdSetForceAndWristJointTorquesAndGripperForce(
-        fx, fy, fz,
-        wrist_joint_tau[0], wrist_joint_tau[1], wrist_joint_tau[2],
-        fg, device_id_);
+    // motors (which would fight a position hold). External Cartesian wrench
+    // torques are dropped in this mode — Unity / Python publishers that need
+    // to drive the wrist must switch to joint-space too.
+    //   - force mode: use the dhd* variant (no DRD regulation running; the
+    //     SDK hold/sphere examples use exactly this call).
+    //   - legacy DRD-regulation mode: use the drd* variant so the write
+    //     composes additively with DRD's translation regulation.
+    result = force_mode_
+        ? dhdSetForceAndWristJointTorquesAndGripperForce(
+              fx, fy, fz,
+              wrist_joint_tau[0], wrist_joint_tau[1], wrist_joint_tau[2],
+              fg, device_id_)
+        : drdSetForceAndWristJointTorquesAndGripperForce(
+              fx, fy, fz,
+              wrist_joint_tau[0], wrist_joint_tau[1], wrist_joint_tau[2],
+              fg, device_id_);
   } else {
-    result = haptic_use_drd_api_
+    // Cartesian path. Use dhd* in force mode (and whenever use_drd_api is off).
+    result = (haptic_use_drd_api_ && !force_mode_)
         ? drdSetForceAndTorqueAndGripperForce(
               fx, fy, fz,
               tx, ty, tz,

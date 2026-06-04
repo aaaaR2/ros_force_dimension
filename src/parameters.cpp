@@ -57,6 +57,43 @@ force_dimension::Node::set_parameters_callback(
       constraints_.stiffness = parameter.as_double();
     if (parameter.get_name() == "constraints.damping")
       constraints_.damping = parameter.as_double();
+    // Translation position hold (force-mode), live-tunable for bring-up.
+    if (parameter.get_name() == "constraints.translation_hold.enabled")
+      constraints_.translation_hold_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.translation_hold.stiffness")
+      constraints_.translation_hold_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.translation_hold.damping")
+      constraints_.translation_hold_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.translation_hold.max_force")
+      constraints_.translation_hold_max_force = parameter.as_double();
+    // Circular track ("ring") guide, live-tunable for bring-up.
+    if (parameter.get_name() == "constraints.ring.enabled")
+      constraints_.ring_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.ring.radius")
+      constraints_.ring_radius = parameter.as_double();
+    if (parameter.get_name() == "constraints.ring.stiffness")
+      constraints_.ring_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.ring.damping")
+      constraints_.ring_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.ring.max_force")
+      constraints_.ring_max_force = parameter.as_double();
+    if (parameter.get_name() == "constraints.ring.center_deadzone")
+      constraints_.ring_center_deadzone = parameter.as_double();
+    // Clean wrist upright lock, live-tunable for bring-up.
+    if (parameter.get_name() == "constraints.wrist_upright.enabled")
+      constraints_.wrist_upright_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.wrist_upright.stiffness")
+      constraints_.wrist_upright_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_upright.damping")
+      constraints_.wrist_upright_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_upright.max_torque")
+      constraints_.wrist_upright_max_torque = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_upright.vel_filter_alpha")
+      constraints_.wrist_upright_vel_filter_alpha = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_upright.free_axis")
+      constraints_.wrist_upright_free_axis = parameter.as_int();
+    if (parameter.get_name() == "constraints.wrist_upright.free_axis_damping")
+      constraints_.wrist_upright_free_axis_damping = parameter.as_double();
     // Wrist orientation lock (live-tunable via ROS parameter service).
     if (parameter.get_name() == "constraints.wrist_lock.stiffness")
       constraints_.wrist_lock_stiffness = parameter.as_double();
@@ -80,6 +117,18 @@ force_dimension::Node::set_parameters_callback(
       constraints_.wrist_homed = false;
       constraints_.wrist_joint_homed = false;
     }
+    // Wrist lock-mode (upright/left/right). Switching `mode` retargets the
+    // slewed roll offset; it must NOT re-home (that would move the neutral).
+    if (parameter.get_name() == "constraints.wrist_lock.roll_slew_rate_rad_s")
+      constraints_.wrist_roll_slew_rate = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.roll_range_margin_rad")
+      constraints_.wrist_roll_range_margin = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.roll_offset_left_rad")
+      wrist_roll_offset_left_ = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.roll_offset_right_rad")
+      wrist_roll_offset_right_ = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_lock.mode")
+      wrist_roll_offset_target_.store(mode_to_offset(parameter.as_string()));
   }
   return result;
 }

@@ -46,6 +46,8 @@ void force_dimension::Node::PublishState() {
   PublishGripperAngle();
   PublishVelocity();
   PublishOrientation();
+  PublishOrientationQuat();
+  PublishWristJoints();
 }
 
 void force_dimension::Node::PublishPosition() {
@@ -136,6 +138,42 @@ void force_dimension::Node::PublishOrientation() {
   message.y = snap.ori_rad[1];
   message.z = snap.ori_rad[2];
   orientation_publisher_->publish(message);
+}
+
+void force_dimension::Node::PublishOrientationQuat() {
+  if (!IsPublishableSample("orientation_quat")) return;
+  DeviceSnapshot snap;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    snap = device_snapshot_;
+  }
+  if (!snap.valid || !snap.has_orientation) return;
+
+  // End-effector orientation quaternion (x,y,z,w), from the device frame.
+  auto message = OrientationQuatMessage();
+  message.x = snap.quat[0];
+  message.y = snap.quat[1];
+  message.z = snap.quat[2];
+  message.w = snap.quat[3];
+  orientation_quat_publisher_->publish(message);
+}
+
+void force_dimension::Node::PublishWristJoints() {
+  if (!IsPublishableSample("wrist_joint_angles")) return;
+  DeviceSnapshot snap;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    snap = device_snapshot_;
+  }
+  if (!snap.valid || !snap.has_wrist_joint) return;
+
+  // Raw Sigma.7 wrist joint angles (rad): x = w0 (roll), y = w1 (pitch),
+  // z = w2 (yaw). Distinct from the derived Euler orientation.
+  auto message = WristJointMessage();
+  message.x = snap.wrist_joint_rad[0];
+  message.y = snap.wrist_joint_rad[1];
+  message.z = snap.wrist_joint_rad[2];
+  wrist_joint_publisher_->publish(message);
 }
 
 bool force_dimension::Node::IsPublishableSample(std::string parameter_name) {

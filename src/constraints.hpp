@@ -31,6 +31,81 @@ struct ConstraintState {
   double channel_offset[3]     = {0.0, 0.0, 0.0};           // m, auto-captured on first read
   double channel_half_width[3] = {0.003, 0.003, 0.003};      // m, dead-zone half-width (±)
 
+  // Translation position hold (force-mode primary hold). Unlike the channel
+  // walls above (dead-zone, outward-only damping — fine as occasional walls but
+  // they limit-cycle when driven as a continuous hold), this is a SDK-hold-style
+  // bilateral spring+damper to the captured home (channel_offset), with a force
+  // cap. Used when DRD regulation is stopped (force mode) so translation is held
+  // smoothly. No dead-zone: continuous damping on both directions prevents the
+  // overshoot/buzz the channel walls produce when used as a hold.
+  bool   translation_hold_enabled   = false;
+  double translation_hold_stiffness = 150.0;  // N/m
+  double translation_hold_damping   = 25.0;   // N/(m/s), bilateral
+  double translation_hold_max_force = 5.0;    // N, per-axis clamp
+
+  // Circular track ("ring") guide — 2D version of a spherical workspace guide.
+  // Confines the effector to a circle of radius ring_radius in the plane
+  // orthogonal to ring_height_axis, centered at the captured home
+  // (channel_offset). A BILATERAL radial spring+damper holds it ON the rim
+  // (tangential motion is free, so the effector orbits the ring); a separate
+  // spring+damper on ring_height_axis locks the "height" to the home value.
+  // Velocity damping uses the SDK's measured vel[] (rate-independent). Forces
+  // are capped per component. Inside ring_center_deadzone the radial term is
+  // skipped (the radial direction is undefined at r=0 and we must not shove the
+  // hand at startup, when the device sits at the center). Force-mode only.
+  bool   ring_enabled         = false;
+  double ring_radius          = 0.04;   // m
+  int    ring_height_axis     = 2;      // axis locked to home height (0=X,1=Y,2=Z)
+  double ring_stiffness       = 300.0;  // N/m (radial + height)
+  double ring_damping         = 30.0;   // N/(m/s), bilateral
+  double ring_max_force       = 6.0;    // N, per-component clamp
+  double ring_center_deadzone = 0.005;  // m, no radial force inside this radius
+  // In-plane ring center (the "central cylinder" axis), in world coords on the
+  // two non-height axes. Set at startup by on_activate from the autocenter base
+  // plus the configured planar offset (constraints.ring.center_offset_0/1). When
+  // ring_center_valid is false (e.g. ring enabled live without relaunch), the
+  // loop falls back to the auto-homed channel_offset as the center.
+  double ring_center[2]       = {0.0, 0.0};
+  bool   ring_center_valid    = false;
+
+  // Clean wrist UPRIGHT lock — same design principles as the ring constraint:
+  // force-mode, bilateral spring+damper, damping on the SDK's MEASURED joint
+  // velocity (dhdGetJointVelocities — rate-independent, so NO finite-difference,
+  // NO 200 Hz decimation/ZOH, NO LPF hacks that the legacy wrist_lock_joint_space
+  // path used; those assumed a 2 kHz loop that actually runs ~4 kHz and buzz).
+  // Holds all three wrist joints at the captured upright pose (home joints).
+  // Reference gains (SDK hold.cpp): low stiffness, generous damping, small torque
+  // cap => overdamped, cannot buzz. Tune live. Mutually exclusive with the legacy
+  // wrist_lock (enable one). Force-mode only.
+  // Gains match SDK hold.cpp (proven smooth on this hardware, including WSL).
+  // UNIT NOTE (important): dhdGetWristJointAngles -> rad, dhdGetJointVelocities
+  // -> rad/s (NOT degrees). hold.cpp's stiffness 0.01 N*m/deg = 0.57 N*m/rad, and
+  // its damping 0.04 is applied to a rad/s velocity => ~0.04 N*m*s/rad (LIGHT,
+  // ~half-critical for the wrist). We earlier mis-"converted" damping to ~2.0
+  // assuming deg/s; at ~50x hold's value the -Kv*omega term amplified velocity
+  // noise into violent shake. Keep damping LOW (~0.04). DO NOT crank it up.
+  bool   wrist_upright_enabled    = false;
+  double wrist_upright_stiffness  = 0.6;    // N*m/rad, per wrist joint
+  double wrist_upright_damping    = 0.04;   // N*m*s/rad (rad/s velocity!) — keep low
+  double wrist_upright_max_torque = 0.02;   // N*m, per-joint clamp (hold.cpp value)
+  double wrist_upright_home[3]    = {0.0, 0.0, 0.0};  // captured upright joints (rad)
+  bool   wrist_upright_homed      = false;
+  // First-order low-pass on the SDK joint velocity before the damping term.
+  // Over WSL/usbipd the joint-velocity samples are noisy; with heavy Kv the
+  // -Kv*omega term injects that noise as torque chatter (shake) — MORE damping
+  // makes it worse. Filtering omega fixes that. alpha in [0,1]: 1.0 = raw (no
+  // filter, default), lower = smoother (e.g. 0.1-0.2). Adds a little lag.
+  double wrist_upright_vel_filter_alpha = 1.0;
+  double wrist_upright_omega_filt[3]    = {0.0, 0.0, 0.0};  // filter state
+  // Optional released ("free") wrist joint: -1 = lock all three (default);
+  // 0/1/2 = free w0/w1/w2 — that joint gets only viscous damping
+  // (-free_axis_damping * omega), no position lock. Lets the clean lock cover
+  // the wrist-flexion case (lock roll+pitch w0,w1; free yaw w2 with ramped
+  // damping) without the legacy decimated path. free_axis_damping is the same
+  // knob damping_progression can ramp.
+  int    wrist_upright_free_axis        = -1;
+  double wrist_upright_free_axis_damping = 0.0;  // N*m*s/rad on the free joint
+
   // Circle constraint (radial boundary in the plane orthogonal to the primary channel axis).
   // Plane axes are always the two axes that are NOT the primary channel axis (0=X by default).
   // circle_plane_axes[0] and [1] are set at home time from the active channel config.
@@ -119,6 +194,26 @@ struct ConstraintState {
   // first tick after activation.
   double wrist_home_rotation[3][3]    = {{1,0,0},{0,1,0},{0,0,1}};
   bool   wrist_homed                  = false;
+
+  // --- Roll-axis lock-mode offset (upright / left / right) -----------------
+  // The wrist-flexion task locks roll+pitch and leaves yaw free. To support
+  // "left"/"right" lock modes the locked ROLL setpoint is offset from the
+  // captured neutral by a slewed amount. All fields below are touched ONLY by
+  // the 2 kHz haptic thread (plain doubles, no locking). The cross-thread
+  // *target* offset lives in Node::wrist_roll_offset_target_ (std::atomic).
+  // wrist_neutral_roll is the roll angle captured at home (= wrist_home_joint[0]
+  // on the first tick); the effective roll setpoint is
+  //   wrist_home_joint[0] + wrist_roll_offset_current
+  // clamped into the device's safe roll range. The current offset slews toward
+  // the target at wrist_roll_slew_rate so a mode switch never steps the
+  // setpoint (a step would slam the wrist with Kp*offset N*m instantly).
+  double wrist_neutral_roll           = 0.0;   // roll captured at home (rad)
+  double wrist_roll_offset_current    = 0.0;   // slewed offset applied to roll (rad)
+  double wrist_roll_min               = 0.0;   // device roll lower limit (rad, slot 3)
+  double wrist_roll_max               = 0.0;   // device roll upper limit (rad, slot 3)
+  double wrist_roll_range_margin      = 0.05;  // safety margin inside the limits (rad)
+  double wrist_roll_slew_rate         = 0.5;   // offset slew rate (rad/s)
+  bool   wrist_roll_range_valid       = false; // true once the live range was read
 };
 
 } // namespace force_dimension

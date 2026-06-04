@@ -64,10 +64,29 @@ const char GRIPPER_ANGLE_FEEDBACK_TOPIC[] = "feedback/gripper_angle";
  */
 const char ORIENTATION_FEEDBACK_TOPIC[] = "feedback/orientation";
 
+/** Topic for raw wrist joint angles (rad): x=w0 roll, y=w1 pitch, z=w2 yaw.
+ *
+ */
+const char WRIST_JOINT_FEEDBACK_TOPIC[] = "feedback/wrist_joint_angles";
+
+/** Topic for end-effector orientation as a quaternion (x,y,z,w).
+ *
+ */
+const char ORIENTATION_QUAT_FEEDBACK_TOPIC[] = "feedback/orientation_quat";
+
 /** Topic for synchronized device state feedback.
  *
  */
 const char DEVICE_STATE_FEEDBACK_TOPIC[] = "feedback/state";
+
+/** Topic for selecting the wrist lock mode (upright / left / right).
+ *  Subscribed as std_msgs/String; Unity publishes here to switch the locked
+ *  roll orientation live within a recording session.
+ */
+const char WRIST_MODE_COMMAND_TOPIC[] = "wrist_lock/set_mode";
+
+/** Topic for publishing the active wrist lock mode (feedback for Unity). */
+const char WRIST_MODE_FEEDBACK_TOPIC[] = "wrist_lock/mode";
 
 } // namespace force_dimension
 

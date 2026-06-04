@@ -103,6 +103,12 @@ private:
   // Publishes wrist orientation in radians.
   void PublishOrientation(void);
 
+  // Publishes end-effector orientation as a quaternion (x,y,z,w).
+  void PublishOrientationQuat(void);
+
+  // Publishes raw wrist joint angles (w0,w1,w2) in radians.
+  void PublishWristJoints(void);
+
   // Publishes synchronized device state with selective metrics.
   void PublishDeviceState(void);
 
@@ -119,6 +125,17 @@ private:
 
   // Stores the latest force command received via ROS for the haptic loop.
   void force_callback(const ForceMessage);
+
+  // Subscribes to wrist lock-mode commands (upright / left / right) so the
+  // locked roll orientation can be switched live from Unity.
+  void SubscribeWristMode(void);
+
+  // Stores the latest wrist lock mode by setting the target roll offset.
+  void wrist_mode_callback(const WristModeMessage);
+
+  // Maps a lock-mode string ("upright"|"left"|"right") to a roll offset (rad).
+  // Returns the upright offset (0) and logs a warning for unknown strings.
+  double mode_to_offset(const std::string &mode) const;
 
   // Applies workspace constraint forces + external commands to the device at 2 kHz.
   void ApplyHapticForce(void);
@@ -162,11 +179,14 @@ private:
     double pos[3] = {0.0, 0.0, 0.0};
     double vel[3] = {0.0, 0.0, 0.0};
     double ori_rad[3] = {0.0, 0.0, 0.0};   // wrist Euler angles (rad)
+    double quat[4] = {0.0, 0.0, 0.0, 1.0}; // end-effector orientation quaternion (x,y,z,w)
     double omega[3] = {0.0, 0.0, 0.0};     // angular velocity (rad/s)
+    double wrist_joint_rad[3] = {0.0, 0.0, 0.0};  // raw joint angles: w0,w1,w2 (rad)
     double gripper_gap_m = 0.0;
     double gripper_angle_rad = 0.0;
     int    button_mask = 0;
     bool   has_orientation = false;
+    bool   has_wrist_joint = false;
     bool   has_gripper = false;
     bool   valid = false;                  // false until first haptic tick lands
   };
@@ -179,11 +199,25 @@ private:
   int sample_number_;
   bool hardware_disabled_;
   bool haptic_use_drd_api_ = false;  // true: drd* force API (composes with DRD regulation)
+  // Force-mode hold (SDK hold/sphere example pattern): after centering with DRD,
+  // drdStop(true) and hold every axis in the 2 kHz loop using ONLY dhd* force
+  // functions. Eliminates the DRD regulation thread entirely (no "regulation
+  // thread stopped" drops). Translation hold comes from channel constraints,
+  // gripper from the fg spring, wrist from the joint-space PD. Default false
+  // preserves the legacy DRD-regulation behavior.
+  bool force_mode_ = false;
   double baseline_effector_mass_kg_;
   double home_gripper_gap_;
   ConstraintState constraints_;        // cached workspace constraint parameters
   ForceMessage last_force_command_;    // additive external forces (zero-order hold), guarded by force_mutex_
   mutable std::mutex force_mutex_;     // protects last_force_command_ between ROS and haptic threads
+  // Target roll offset for the wrist lock mode (rad). Written by the mode
+  // topic/param callbacks on the executor thread, read by the 2 kHz haptic
+  // loop. A single lock-free scalar — no mutex needed (cf. force_mutex_ which
+  // guards a multi-field message).
+  std::atomic<double> wrist_roll_offset_target_{0.0};
+  double wrist_roll_offset_left_  = 0.0;   // cached "left"  mode offset (rad)
+  double wrist_roll_offset_right_ = 0.0;   // cached "right" mode offset (rad)
   DeviceSnapshot device_snapshot_;     // populated by haptic thread, read by publish callbacks
   mutable std::mutex state_mutex_;     // protects device_snapshot_
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr rehome_service_;
@@ -197,7 +231,11 @@ private:
   rclcpp::Publisher<VelocityMessage>::SharedPtr velocity_publisher_;
   // rclcpp::Publisher<ForceMessage>::SharedPtr force_publisher_;
   rclcpp::Subscription<ForceMessage>::SharedPtr force_subscription_;
+  rclcpp::Subscription<WristModeMessage>::SharedPtr wrist_mode_subscription_;
+  rclcpp::Publisher<WristModeMessage>::SharedPtr wrist_mode_publisher_;
   rclcpp::Publisher<OrientationMessage>::SharedPtr orientation_publisher_;
+  rclcpp::Publisher<OrientationQuatMessage>::SharedPtr orientation_quat_publisher_;
+  rclcpp::Publisher<WristJointMessage>::SharedPtr wrist_joint_publisher_;
   rclcpp::Publisher<DeviceStateMessage>::SharedPtr device_state_publisher_;
   OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 };

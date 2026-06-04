@@ -141,6 +141,47 @@ void Node::ComputeConstraintForce(const double pos[3], const double vel[3],
       force_out[ax1] += f_mag * n1;
     }
   }
+
+  // --- Circular track ("ring") guide: hold the effector ON a circle ---
+  // 2D version of a spherical guide. Plane = the two axes that are not the
+  // height axis; centered at the captured home (channel_offset). The radial
+  // spring+damper is BILATERAL (pulls in from outside the rim, pushes out from
+  // inside it), so the effector is held on radius R but free tangentially —
+  // it orbits the rim. A separate spring+damper locks the height axis to home.
+  if (constraints_.ring_enabled && constraints_.homed) {
+    const int  h  = constraints_.ring_height_axis;     // locked ("height") axis
+    const int  a0 = (h == 0) ? 1 : 0;                  // first in-plane axis
+    const int  a1 = (h == 2) ? 1 : 2;                  // second in-plane axis
+    const double Kp = constraints_.ring_stiffness;
+    const double Kv = constraints_.ring_damping;
+    const double fmax = constraints_.ring_max_force;
+    auto clampf = [fmax](double f) {
+      return (f > fmax) ? fmax : ((f < -fmax) ? -fmax : f);
+    };
+
+    // In-plane radial spring+damper to the rim; tangential direction is free.
+    // Center = the explicit ring_center set at startup (autocenter base + planar
+    // offset); fall back to the auto-homed position if it wasn't set.
+    const double c0 = constraints_.ring_center_valid ? constraints_.ring_center[0]
+                                                     : constraints_.channel_offset[a0];
+    const double c1 = constraints_.ring_center_valid ? constraints_.ring_center[1]
+                                                     : constraints_.channel_offset[a1];
+    const double d0 = pos[a0] - c0;
+    const double d1 = pos[a1] - c1;
+    const double r  = std::sqrt(d0 * d0 + d1 * d1);
+    if (r > constraints_.ring_center_deadzone) {
+      const double n0 = d0 / r;                         // outward radial unit
+      const double n1 = d1 / r;
+      const double v_r = vel[a0] * n0 + vel[a1] * n1;    // radial velocity
+      const double f_r = clampf(-Kp * (r - constraints_.ring_radius) - Kv * v_r);
+      force_out[a0] += f_r * n0;
+      force_out[a1] += f_r * n1;
+    }
+
+    // Lock the height axis to the captured home height.
+    const double e_h = pos[h] - constraints_.channel_offset[h];
+    force_out[h] += clampf(-Kp * e_h - Kv * vel[h]);
+  }
 }
 
 #endif // FORCE_DIMENSION_CONSTRAINTS_CPP_

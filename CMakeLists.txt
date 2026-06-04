@@ -15,6 +15,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(example_interfaces REQUIRED)
 find_package(force_dimension_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # *****************************************************************************
 # Find the Force Dimension SDK dependency.
@@ -48,7 +49,12 @@ add_executable(node src/entry_point.cpp src/node.cpp
                     src/parameters.cpp src/gravity_compensation.cpp
                     src/forces.cpp src/constraints.cpp)
 ament_target_dependencies(node rclcpp geometry_msgs
-                          example_interfaces force_dimension_msgs std_srvs ForceDimensionSDK)
+                          example_interfaces force_dimension_msgs std_srvs std_msgs ForceDimensionSDK)
+
+# Standalone diagnostic: print the wrist joint angle range + current angles so
+# the operator can pick the left/right roll lock offsets. No ROS dependency.
+add_executable(wrist_range_probe src/wrist_range_probe.cpp)
+ament_target_dependencies(wrist_range_probe ForceDimensionSDK)
 
 # *****************************************************************************
 # Install.
@@ -56,6 +62,7 @@ ament_target_dependencies(node rclcpp geometry_msgs
 
 install(TARGETS
   node
+  wrist_range_probe
   DESTINATION lib/${PROJECT_NAME})
 
 # *****************************************************************************
