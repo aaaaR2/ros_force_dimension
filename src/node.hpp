@@ -103,9 +103,6 @@ private:
   // Publishes wrist orientation in radians.
   void PublishOrientation(void);
 
-  // Publishes end-effector orientation as a quaternion (x,y,z,w).
-  void PublishOrientationQuat(void);
-
   // Publishes raw wrist joint angles (w0,w1,w2) in radians.
   void PublishWristJoints(void);
 
@@ -179,7 +176,6 @@ private:
     double pos[3] = {0.0, 0.0, 0.0};
     double vel[3] = {0.0, 0.0, 0.0};
     double ori_rad[3] = {0.0, 0.0, 0.0};   // wrist Euler angles (rad)
-    double quat[4] = {0.0, 0.0, 0.0, 1.0}; // end-effector orientation quaternion (x,y,z,w)
     double omega[3] = {0.0, 0.0, 0.0};     // angular velocity (rad/s)
     double wrist_joint_rad[3] = {0.0, 0.0, 0.0};  // raw joint angles: w0,w1,w2 (rad)
     double gripper_gap_m = 0.0;
@@ -234,7 +230,6 @@ private:
   rclcpp::Subscription<WristModeMessage>::SharedPtr wrist_mode_subscription_;
   rclcpp::Publisher<WristModeMessage>::SharedPtr wrist_mode_publisher_;
   rclcpp::Publisher<OrientationMessage>::SharedPtr orientation_publisher_;
-  rclcpp::Publisher<OrientationQuatMessage>::SharedPtr orientation_quat_publisher_;
   rclcpp::Publisher<WristJointMessage>::SharedPtr wrist_joint_publisher_;
   rclcpp::Publisher<DeviceStateMessage>::SharedPtr device_state_publisher_;
   OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;

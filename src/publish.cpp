@@ -46,7 +46,6 @@ void force_dimension::Node::PublishState() {
   PublishGripperAngle();
   PublishVelocity();
   PublishOrientation();
-  PublishOrientationQuat();
   PublishWristJoints();
 }
 
@@ -138,24 +137,6 @@ void force_dimension::Node::PublishOrientation() {
   message.y = snap.ori_rad[1];
   message.z = snap.ori_rad[2];
   orientation_publisher_->publish(message);
-}
-
-void force_dimension::Node::PublishOrientationQuat() {
-  if (!IsPublishableSample("orientation_quat")) return;
-  DeviceSnapshot snap;
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    snap = device_snapshot_;
-  }
-  if (!snap.valid || !snap.has_orientation) return;
-
-  // End-effector orientation quaternion (x,y,z,w), from the device frame.
-  auto message = OrientationQuatMessage();
-  message.x = snap.quat[0];
-  message.y = snap.quat[1];
-  message.z = snap.quat[2];
-  message.w = snap.quat[3];
-  orientation_quat_publisher_->publish(message);
 }
 
 void force_dimension::Node::PublishWristJoints() {

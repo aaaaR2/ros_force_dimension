@@ -17,7 +17,6 @@
 #include "example_interfaces/msg/float64.hpp"
 #include "example_interfaces/msg/int32.hpp"
 #include "geometry_msgs/msg/point.hpp"
-#include "geometry_msgs/msg/quaternion.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
 #include "geometry_msgs/msg/wrench.hpp"
 #include "force_dimension_msgs/msg/device_state.hpp"
@@ -54,12 +53,6 @@ typedef geometry_msgs::msg::Vector3 OrientationMessage;
  *  dhdGetWristJointAngles — distinct from the derived Euler orientation.
  */
 typedef geometry_msgs::msg::Vector3 WristJointMessage;
-
-/** End-effector orientation as a quaternion (x,y,z,w), derived from the
- *  device rotation matrix (dhdGetOrientationFrame). Same orientation as the
- *  Euler OrientationMessage, in quaternion form for analysis.
- */
-typedef geometry_msgs::msg::Quaternion OrientationQuatMessage;
 
 /** Event ROS message type definition.
  *

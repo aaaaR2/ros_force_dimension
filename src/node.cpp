@@ -98,10 +98,6 @@ void Node::on_configure(void) {
   topic = WRIST_JOINT_FEEDBACK_TOPIC;
   wrist_joint_publisher_ = create_publisher<WristJointMessage>(topic, qos);
 
-  // Create the end-effector orientation quaternion publisher.
-  topic = ORIENTATION_QUAT_FEEDBACK_TOPIC;
-  orientation_quat_publisher_ = create_publisher<OrientationQuatMessage>(topic, qos);
-
   // Create the synchronized device state publisher.
   topic = DEVICE_STATE_FEEDBACK_TOPIC;
   device_state_publisher_ = create_publisher<DeviceStateMessage>(topic, qos);
@@ -120,7 +116,6 @@ void Node::on_configure(void) {
   declare_parameter<int>("feedback_sample_decimation.gripper_gap", 50);
   declare_parameter<int>("feedback_sample_decimation.gripper_angle", 50);
   declare_parameter<int>("feedback_sample_decimation.orientation", 50);
-  declare_parameter<int>("feedback_sample_decimation.orientation_quat", 50);
   declare_parameter<int>("feedback_sample_decimation.wrist_joint_angles", 50);
   declare_parameter<int>("feedback_sample_decimation.state", 50);
   declare_parameter<bool>("device_state_metrics.include_position", true);

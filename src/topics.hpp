@@ -69,11 +69,6 @@ const char ORIENTATION_FEEDBACK_TOPIC[] = "feedback/orientation";
  */
 const char WRIST_JOINT_FEEDBACK_TOPIC[] = "feedback/wrist_joint_angles";
 
-/** Topic for end-effector orientation as a quaternion (x,y,z,w).
- *
- */
-const char ORIENTATION_QUAT_FEEDBACK_TOPIC[] = "feedback/orientation_quat";
-
 /** Topic for synchronized device state feedback.
  *
  */

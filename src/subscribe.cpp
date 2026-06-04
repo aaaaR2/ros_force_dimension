@@ -546,7 +546,6 @@ void Node::ApplyHapticForce(void) {
   double  gripper_angle_snap = 0.0;
   double  wrist_joint_snap[3] = {0.0, 0.0, 0.0};  // raw joint angles w0,w1,w2 (rad)
   double  ori_rad_snap[3] = {0.0, 0.0, 0.0};      // end-effector Euler (rad)
-  double  quat_snap[4] = {0.0, 0.0, 0.0, 1.0};    // orientation quaternion (x,y,z,w)
   bool    ori_snap_valid = false;
   bool    has_gripper_snap = (!hardware_disabled_) && dhdHasGripper(device_id_);
   if (++snapshot_decim >= 20) {
@@ -563,40 +562,9 @@ void Node::ApplyHapticForce(void) {
       dhdGetWristJointAngles(&wrist_joint_snap[0], &wrist_joint_snap[1],
                              &wrist_joint_snap[2], device_id_);
       // End-effector orientation, captured here so it is recorded in EVERY mode
-      // (the per-tick wrist_lock path only runs when that lock is active). Euler
-      // for the existing field; rotation matrix -> quaternion for the quat topic.
-      dhdGetOrientationRad(&ori_rad_snap[0], &ori_rad_snap[1], &ori_rad_snap[2],
-                           device_id_);
-      double Rm[3][3] = {};
-      if (dhdGetOrientationFrame(Rm, device_id_) >= 0) {
-        const double tr = Rm[0][0] + Rm[1][1] + Rm[2][2];
-        double qx, qy, qz, qw;
-        if (tr > 0.0) {
-          double s = 0.5 / std::sqrt(tr + 1.0);
-          qw = 0.25 / s;
-          qx = (Rm[2][1] - Rm[1][2]) * s;
-          qy = (Rm[0][2] - Rm[2][0]) * s;
-          qz = (Rm[1][0] - Rm[0][1]) * s;
-        } else if (Rm[0][0] > Rm[1][1] && Rm[0][0] > Rm[2][2]) {
-          double s = 2.0 * std::sqrt(1.0 + Rm[0][0] - Rm[1][1] - Rm[2][2]);
-          qw = (Rm[2][1] - Rm[1][2]) / s;
-          qx = 0.25 * s;
-          qy = (Rm[0][1] + Rm[1][0]) / s;
-          qz = (Rm[0][2] + Rm[2][0]) / s;
-        } else if (Rm[1][1] > Rm[2][2]) {
-          double s = 2.0 * std::sqrt(1.0 + Rm[1][1] - Rm[0][0] - Rm[2][2]);
-          qw = (Rm[0][2] - Rm[2][0]) / s;
-          qx = (Rm[0][1] + Rm[1][0]) / s;
-          qy = 0.25 * s;
-          qz = (Rm[1][2] + Rm[2][1]) / s;
-        } else {
-          double s = 2.0 * std::sqrt(1.0 + Rm[2][2] - Rm[0][0] - Rm[1][1]);
-          qw = (Rm[1][0] - Rm[0][1]) / s;
-          qx = (Rm[0][2] + Rm[2][0]) / s;
-          qy = (Rm[1][2] + Rm[2][1]) / s;
-          qz = 0.25 * s;
-        }
-        quat_snap[0] = qx; quat_snap[1] = qy; quat_snap[2] = qz; quat_snap[3] = qw;
+      // (the per-tick wrist_lock path only runs when that lock is active).
+      if (dhdGetOrientationRad(&ori_rad_snap[0], &ori_rad_snap[1], &ori_rad_snap[2],
+                               device_id_) >= 0) {
         ori_snap_valid = true;
       }
     }
@@ -630,15 +598,11 @@ void Node::ApplyHapticForce(void) {
         device_snapshot_.has_wrist_joint = true;
       }
       if (ori_snap_valid) {
-        // Mode-independent orientation capture (Euler + quaternion), so it is
-        // recorded even when no per-tick wrist-lock path is reading orientation.
+        // Mode-independent Euler orientation capture, so it is recorded even
+        // when no per-tick wrist-lock path is reading orientation.
         device_snapshot_.ori_rad[0] = ori_rad_snap[0];
         device_snapshot_.ori_rad[1] = ori_rad_snap[1];
         device_snapshot_.ori_rad[2] = ori_rad_snap[2];
-        device_snapshot_.quat[0] = quat_snap[0];
-        device_snapshot_.quat[1] = quat_snap[1];
-        device_snapshot_.quat[2] = quat_snap[2];
-        device_snapshot_.quat[3] = quat_snap[3];
         device_snapshot_.has_orientation = true;
       }
     }
