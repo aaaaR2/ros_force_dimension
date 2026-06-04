@@ -193,7 +193,6 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_lock.error_deadband_rad", 0.01);
   declare_parameter<double>("constraints.wrist_lock.error_filter_alpha", 0.15);
   declare_parameter<double>("constraints.wrist_lock.omega_filter_alpha", 0.15);
-  declare_parameter<bool>("constraints.wrist_lock.joint_space", false);
   // Per-wrist-joint home offsets. SDK joint ordering is hardware-dependent.
   // For the Sigma.7, empirically: slot 3 = roll, 4 = pitch, 5 = yaw.
   // Positive/negative biases the autocenter pose so the participant gets
@@ -640,15 +639,10 @@ void Node::on_activate(void) {
   constraints_.wrist_lock_error_deadband = get_parameter("constraints.wrist_lock.error_deadband_rad").as_double();
   constraints_.wrist_lock_error_filter_alpha = get_parameter("constraints.wrist_lock.error_filter_alpha").as_double();
   constraints_.wrist_lock_omega_filter_alpha = get_parameter("constraints.wrist_lock.omega_filter_alpha").as_double();
-  constraints_.wrist_lock_joint_space = get_parameter("constraints.wrist_lock.joint_space").as_bool();
   constraints_.wrist_free_axis_omega_filt = 0.0;
-  constraints_.wrist_joint_homed = false;
   for (int i = 0; i < 3; ++i) {
     constraints_.wrist_lock_error_filt[i] = 0.0;
     constraints_.wrist_lock_omega_filt[i] = 0.0;
-    constraints_.wrist_home_joint[i] = 0.0;
-    constraints_.wrist_joint_prev[i] = 0.0;
-    constraints_.wrist_joint_vel_filt[i] = 0.0;
   }
   constraints_.wrist_homed           = false;
   for (int r = 0; r < 3; ++r)

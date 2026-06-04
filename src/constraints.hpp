@@ -72,9 +72,8 @@ struct ConstraintState {
 
   // Clean wrist UPRIGHT lock — same design principles as the ring constraint:
   // force-mode, bilateral spring+damper, damping on the SDK's MEASURED joint
-  // velocity (dhdGetJointVelocities — rate-independent, so NO finite-difference,
-  // NO 200 Hz decimation/ZOH, NO LPF hacks that the legacy wrist_lock_joint_space
-  // path used; those assumed a 2 kHz loop that actually runs ~4 kHz and buzz).
+  // velocity (dhdGetJointVelocities — rate-independent: no finite-difference,
+  // no decimation/ZOH, no LPF hacks).
   // Holds all three wrist joints at the captured upright pose (home joints).
   // Reference gains (SDK hold.cpp): low stiffness, generous damping, small torque
   // cap => overdamped, cannot buzz. Tune live. Mutually exclusive with the legacy
@@ -166,30 +165,6 @@ struct ConstraintState {
   // the pitch deadband). Same alpha convention as the other filters.
   double wrist_lock_omega_filter_alpha = 0.15;
   double wrist_lock_omega_filt[3]      = {0.0, 0.0, 0.0};
-  // Joint-space PD mode. When true, the wrist lock reads per-joint angles
-  // (dhdGetWristJointAngles) and writes per-joint torques
-  // (drdSetForceAndWristJointTorquesAndGripperForce) instead of Cartesian
-  // torque. This avoids the Sigma.7 parallel-mechanism Jacobian projecting
-  // small Cartesian wrist torques onto the translation motors, which
-  // otherwise fight DRD position-hold and produce buzz when roll/pitch
-  // is non-zero. Joint mapping (empirical for Sigma.7): j0=roll, j1=pitch,
-  // j2=yaw. The free axis index follows the same convention as the
-  // Cartesian mode (0=roll, 1=pitch, 2=yaw).
-  bool   wrist_lock_joint_space        = false;
-  double wrist_home_joint[3]           = {0.0, 0.0, 0.0};
-  bool   wrist_joint_homed             = false;
-  double wrist_joint_prev[3]           = {0.0, 0.0, 0.0};
-  double wrist_joint_vel_filt[3]       = {0.0, 0.0, 0.0};
-  // Zero-order-hold the joint-space PD output for kJointHoldTicks ticks
-  // between recomputes. The wrist's mechanical bandwidth is well under
-  // 200 Hz, so the PD doesn't need to update at 2 kHz. Holding the torque
-  // command for ~5 ms breaks the encoder-quantization positive-feedback
-  // limit cycle that sustained the audible buzz: the cycle needs 2 kHz
-  // closed-loop iteration to ring at ~kHz, and ZOH at 200 Hz removes the
-  // bandwidth required to sustain it. Cycle period is determined by
-  // kJointHoldTicks at the 2 kHz haptic loop rate.
-  double wrist_joint_tau_hold[3]       = {0.0, 0.0, 0.0};
-  int    wrist_joint_hold_counter      = 0;
   // Home orientation stored as a 3x3 rotation matrix so the PD error is
   // computed as a rotation vector in world frame — no Euler-axis convention
   // dependence, no gimbal coupling. Initialized to identity; overwritten on
@@ -203,9 +178,8 @@ struct ConstraintState {
   // captured neutral by a slewed amount. All fields below are touched ONLY by
   // the 2 kHz haptic thread (plain doubles, no locking). The cross-thread
   // *target* offset lives in Node::wrist_roll_offset_target_ (std::atomic).
-  // wrist_neutral_roll is the roll angle captured at home (= wrist_home_joint[0]
-  // on the first tick); the effective roll setpoint is
-  //   wrist_home_joint[0] + wrist_roll_offset_current
+  // wrist_neutral_roll is the roll joint angle captured at home (first tick);
+  // the effective roll setpoint is wrist_neutral_roll + wrist_roll_offset_current
   // clamped into the device's safe roll range. The current offset slews toward
   // the target at wrist_roll_slew_rate so a mode switch never steps the
   // setpoint (a step would slam the wrist with Kp*offset N*m instantly).

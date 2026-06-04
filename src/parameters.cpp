@@ -120,12 +120,6 @@ force_dimension::Node::set_parameters_callback(
       constraints_.wrist_lock_omega_filter_alpha = parameter.as_double();
     if (parameter.get_name() == "constraints.wrist_lock.enabled")
       constraints_.wrist_lock_enabled = parameter.as_bool();
-    if (parameter.get_name() == "constraints.wrist_lock.joint_space") {
-      constraints_.wrist_lock_joint_space = parameter.as_bool();
-      // Re-home on mode switch so the captured reference is fresh.
-      constraints_.wrist_homed = false;
-      constraints_.wrist_joint_homed = false;
-    }
     // Wrist lock-mode (upright/left/right). Switching `mode` retargets the
     // slewed roll offset; it must NOT re-home (that would move the neutral).
     if (parameter.get_name() == "constraints.wrist_lock.roll_slew_rate_rad_s")

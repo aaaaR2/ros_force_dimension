@@ -232,132 +232,6 @@ void Node::ApplyHapticForce(void) {
       if (t < -tmax) t = -tmax;
       wrist_joint_tau[i] = t;
     }
-  } else if (constraints_.wrist_lock_enabled &&
-      constraints_.wrist_lock_joint_space) {
-    // Joint-space PD with zero-order-hold decimation. The PD output is
-    // recomputed every kJointHoldTicks ticks (default 10 -> 200 Hz) and
-    // held constant in between. Two reasons:
-    //   1. Wrist mechanical bandwidth is under ~50 Hz; updating PD output
-    //      at 2 kHz is unnecessary and gives encoder-quantization
-    //      positive-feedback room to ring at audible frequencies.
-    //   2. ZOH at 200 Hz mathematically prevents any closed-loop limit
-    //      cycle above ~100 Hz: the controller cannot respond fast enough
-    //      to sustain it. The buzz (which sounds ~1 kHz) needs the 2 kHz
-    //      loop to close on itself.
-    // Joint angle is still read every tick so the snapshot stays fresh
-    // for downstream publishers; only the PD compute and torque write
-    // are decimated.
-    constexpr int kJointHoldTicks = 10;  // -> 200 Hz PD update
-    double j_now[3] = {0.0, 0.0, 0.0};
-    dhdGetWristJointAngles(&j_now[0], &j_now[1], &j_now[2], device_id_);
-    if (!constraints_.wrist_joint_homed) {
-      for (int i = 0; i < 3; ++i) {
-        constraints_.wrist_home_joint[i] = j_now[i];
-        constraints_.wrist_joint_prev[i] = j_now[i];
-        constraints_.wrist_joint_vel_filt[i] = 0.0;
-        constraints_.wrist_joint_tau_hold[i] = 0.0;
-      }
-      constraints_.wrist_joint_hold_counter = 0;
-      constraints_.wrist_joint_homed = true;
-      // Capture the upright neutral roll and start the offset at zero. The
-      // applied offset then slews from here toward whatever mode is selected,
-      // so the very first activation never jumps the roll setpoint.
-      constraints_.wrist_neutral_roll = j_now[0];
-      constraints_.wrist_roll_offset_current = 0.0;
-    }
-
-    // Decimated PD recompute. Otherwise the held torque from last compute
-    // is reused (ZOH).
-    if (constraints_.wrist_joint_hold_counter <= 0) {
-      // dt is the *decimated* update period (5 ms at 200 Hz), not the 2 kHz
-      // tick. Using the decimated period keeps the velocity estimate's gain
-      // consistent with how often we look at it.
-      constexpr double kDecimatedDt = kJointHoldTicks / 2000.0;
-      const int free_ax_j = constraints_.wrist_lock_free_axis;
-      const double Kp_j = constraints_.wrist_lock_stiffness;
-      const double Kv_j = constraints_.wrist_lock_damping;
-      const double b_free_j = constraints_.wrist_free_axis_damping;
-      const double err_dz = constraints_.wrist_lock_error_deadband;
-      constexpr double kRampFracJ = 1.0;
-      const double ramp_w_j = err_dz * kRampFracJ;
-      // Larger raw deadbands here than the Cartesian path: at a 200 Hz
-      // update rate, encoder dither shows up as bigger velocity excursions
-      // even though the underlying motion is the same.
-      constexpr double kJointVelQuant = 0.10;     // rad/s (~5.7 deg/s)
-      constexpr double kJointSilenceTau = 0.010;  // N·m
-      constexpr double kJointSilenceVel = 0.10;   // rad/s
-
-      // --- Roll lock-mode offset: slew toward target, clamp to safe range ---
-      // Runs once per decimated recompute (200 Hz, kDecimatedDt) so the slew
-      // rate stays in rad/s. The roll setpoint below becomes
-      //   wrist_home_joint[0] + wrist_roll_offset_current.
-      // Slewing bounds the *rate* of torque rise (Kp*slew_rate), so a mode
-      // switch ramps in smoothly instead of stepping (a step would apply
-      // Kp*offset N*m to the wrist instantly).
-      {
-        double tgt = wrist_roll_offset_target_.load();
-        // Keep the resulting roll setpoint inside the device's measured joint
-        // range (minus a margin). Offsets are relative to the captured neutral,
-        // so shift the absolute limits by the neutral to get offset bounds.
-        if (constraints_.wrist_roll_range_valid) {
-          const double lo = (constraints_.wrist_roll_min +
-                             constraints_.wrist_roll_range_margin) -
-                             constraints_.wrist_neutral_roll;
-          const double hi = (constraints_.wrist_roll_max -
-                             constraints_.wrist_roll_range_margin) -
-                             constraints_.wrist_neutral_roll;
-          if (tgt < lo) tgt = lo;
-          if (tgt > hi) tgt = hi;
-        }
-        const double step = constraints_.wrist_roll_slew_rate * kDecimatedDt;
-        double delta = tgt - constraints_.wrist_roll_offset_current;
-        if (delta >  step) delta =  step;
-        if (delta < -step) delta = -step;
-        constraints_.wrist_roll_offset_current += delta;
-      }
-
-      for (int i = 0; i < 3; ++i) {
-        double dj = (j_now[i] - constraints_.wrist_joint_prev[i]) / kDecimatedDt;
-        constraints_.wrist_joint_prev[i] = j_now[i];
-        if (std::abs(dj) < kJointVelQuant) dj = 0.0;
-        constraints_.wrist_joint_vel_filt[i] = dj;
-
-        if (i == free_ax_j) {
-          constraints_.wrist_joint_tau_hold[i] = -b_free_j * dj;
-          continue;
-        }
-        // Roll (i==0) is offset by the slewed lock-mode offset; pitch holds at
-        // its captured neutral. The offset is zero in upright mode.
-        const double setpoint =
-            (i == 0) ? constraints_.wrist_home_joint[i] +
-                           constraints_.wrist_roll_offset_current
-                     : constraints_.wrist_home_joint[i];
-        double err = j_now[i] - setpoint;
-        if (std::abs(err) < err_dz) err = 0.0;
-        double mag = std::abs(err);
-        double spring = 0.0;
-        if (mag > err_dz) {
-          double effective_err = err > 0.0 ? err - err_dz : err + err_dz;
-          double scale = 1.0;
-          if (ramp_w_j > 0.0 && mag < err_dz + ramp_w_j) {
-            double t = (mag - err_dz) / ramp_w_j;
-            scale = t * t * (3.0 - 2.0 * t);
-          }
-          spring = -Kp_j * effective_err * scale;
-        }
-        double tau_i = spring - Kv_j * dj;
-        if (std::abs(tau_i) < kJointSilenceTau &&
-            std::abs(dj) < kJointSilenceVel) {
-          tau_i = 0.0;
-        }
-        constraints_.wrist_joint_tau_hold[i] = tau_i;
-      }
-      constraints_.wrist_joint_hold_counter = kJointHoldTicks;
-    }
-    --constraints_.wrist_joint_hold_counter;
-    for (int i = 0; i < 3; ++i) {
-      wrist_joint_tau[i] = constraints_.wrist_joint_tau_hold[i];
-    }
   } else if (constraints_.wrist_lock_enabled && got_orientation) {
     // Capture home orientation as a rotation matrix on the first tick.
     if (!constraints_.wrist_homed) {
@@ -408,11 +282,11 @@ void Node::ApplyHapticForce(void) {
     err_vec[2] = 0.5 * (R_err[1][0] - R_err[0][1]);  // yaw error
 
     // --- Roll lock-mode offset: slew toward target, clamp to safe range ---
-    // Rate-independent: uses kSlewDt = 1/4000 s (not kDecimatedDt which was
-    // calibrated for a 2 kHz loop that actually runs ~4 kHz). The SDK
-    // measures omega directly so there is no finite-difference velocity here
-    // and no buzz risk. The slewed offset is applied to err_vec[0] (roll)
-    // below so a +/-90 deg target gradually rotates the held roll setpoint.
+    // Rate-independent: kSlewDt = 1/4000 s fixed constant (loop runs ~4 kHz;
+    // a fixed dt makes the slew rate correct regardless of actual loop speed).
+    // The SDK measures omega directly — no finite-difference, no buzz risk.
+    // The slewed offset is applied to err_vec[0] (roll) below so a +/-90 deg
+    // target gradually rotates the held roll setpoint.
     // At 0.5 rad/s slew rate and 0.25 ms tick: step ~= 1.25e-4 rad/tick.
     {
       constexpr double kSlewDt = 1.0 / 4000.0;  // s, loop-rate-independent
@@ -439,8 +313,7 @@ void Node::ApplyHapticForce(void) {
     // Apply the slewed roll offset to the roll error. A +90 deg target
     // (wrist_roll_offset_current -> +1.5708 rad) subtracts from err_vec[0],
     // shifting the PD setpoint by that amount. Pitch and yaw errors are
-    // unaffected. Offset is in the rotation-vector domain, consistent with
-    // how the joint_space path applied the offset to its roll setpoint.
+    // unaffected. Offset is in the rotation-vector domain.
     err_vec[0] -= constraints_.wrist_roll_offset_current;
 
     const int free_ax = constraints_.wrist_lock_free_axis;
@@ -682,9 +555,7 @@ void Node::ApplyHapticForce(void) {
   //     real input reaches the device unchanged.
   constexpr double kIdleForceN = 0.005;         // 5 mN
   constexpr double kIdleTorqueNm = 0.005;       // 5 mN·m
-  const bool joint_space_active =
-      constraints_.wrist_upright_enabled ||
-      (constraints_.wrist_lock_enabled && constraints_.wrist_lock_joint_space);
+  const bool joint_space_active = constraints_.wrist_upright_enabled;
   const bool joint_torques_idle =
       std::abs(wrist_joint_tau[0]) < kIdleTorqueNm &&
       std::abs(wrist_joint_tau[1]) < kIdleTorqueNm &&
