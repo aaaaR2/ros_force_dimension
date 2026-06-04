@@ -69,8 +69,17 @@ force_dimension::Node::set_parameters_callback(
     // Circular track ("ring") guide, live-tunable for bring-up.
     if (parameter.get_name() == "constraints.ring.enabled")
       constraints_.ring_enabled = parameter.as_bool();
-    if (parameter.get_name() == "constraints.ring.radius")
+    if (parameter.get_name() == "constraints.ring.radius") {
       constraints_.ring_radius = parameter.as_double();
+      // Back-compat: setting radius also sets both semi-axes so orbit.launch.py
+      // (which sets ring.radius) works unchanged without specifying semi_axis_a/b.
+      constraints_.ring_semi_axis_a = parameter.as_double();
+      constraints_.ring_semi_axis_b = parameter.as_double();
+    }
+    if (parameter.get_name() == "constraints.ring.semi_axis_a")
+      constraints_.ring_semi_axis_a = parameter.as_double();
+    if (parameter.get_name() == "constraints.ring.semi_axis_b")
+      constraints_.ring_semi_axis_b = parameter.as_double();
     if (parameter.get_name() == "constraints.ring.stiffness")
       constraints_.ring_stiffness = parameter.as_double();
     if (parameter.get_name() == "constraints.ring.damping")

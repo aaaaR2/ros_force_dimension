@@ -20,6 +20,7 @@
 #define FORCE_DIMENSION_CONSTRAINTS_CPP_
 
 #include "node.hpp"
+#include "ellipse_helpers.hpp"
 #include <cmath>
 
 // Scope namespace elements.
@@ -168,15 +169,18 @@ void Node::ComputeConstraintForce(const double pos[3], const double vel[3],
                                                      : constraints_.channel_offset[a1];
     const double d0 = pos[a0] - c0;
     const double d1 = pos[a1] - c1;
-    const double r  = std::sqrt(d0 * d0 + d1 * d1);
-    if (r > constraints_.ring_center_deadzone) {
-      const double n0 = d0 / r;                         // outward radial unit
-      const double n1 = d1 / r;
-      const double v_r = vel[a0] * n0 + vel[a1] * n1;    // radial velocity
-      const double f_r = clampf(-Kp * (r - constraints_.ring_radius) - Kv * v_r);
-      force_out[a0] += f_r * n0;
-      force_out[a1] += f_r * n1;
-    }
+    // Ellipse radial spring-damper (bilateral): holds effector on the rim of
+    // an ellipse with semi-axes ring_semi_axis_a (along a0) and ring_semi_axis_b
+    // (along a1). Reduces exactly to the legacy circle formula when a==b==radius.
+    double fa0 = 0.0;
+    double fa1 = 0.0;
+    force_dimension::ellipse_radial_force(
+        d0, d1, vel[a0], vel[a1],
+        constraints_.ring_semi_axis_a, constraints_.ring_semi_axis_b,
+        Kp, Kv, fmax, constraints_.ring_center_deadzone,
+        fa0, fa1);
+    force_out[a0] += fa0;
+    force_out[a1] += fa1;
 
     // Lock the height axis to the captured home height.
     const double e_h = pos[h] - constraints_.channel_offset[h];

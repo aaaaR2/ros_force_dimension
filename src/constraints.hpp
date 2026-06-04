@@ -54,7 +54,9 @@ struct ConstraintState {
   // skipped (the radial direction is undefined at r=0 and we must not shove the
   // hand at startup, when the device sits at the center). Force-mode only.
   bool   ring_enabled         = false;
-  double ring_radius          = 0.04;   // m
+  double ring_radius          = 0.04;   // m (back-compat; also sets both semi-axes when radius is set)
+  double ring_semi_axis_a     = 0.04;   // m, semi-axis along first in-plane axis (a0)
+  double ring_semi_axis_b     = 0.04;   // m, semi-axis along second in-plane axis (a1)
   int    ring_height_axis     = 2;      // axis locked to home height (0=X,1=Y,2=Z)
   double ring_stiffness       = 300.0;  // N/m (radial + height)
   double ring_damping         = 30.0;   // N/(m/s), bilateral

@@ -168,6 +168,9 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.ring.center_offset_1", 0.0);
   declare_parameter<bool>("constraints.ring.start_on_rim", false);
   declare_parameter<double>("constraints.ring.start_angle_rad", 0.0);
+  // Ellipse semi-axes. Default 0.0 = sentinel: fall back to ring.radius.
+  declare_parameter<double>("constraints.ring.semi_axis_a", 0.0);
+  declare_parameter<double>("constraints.ring.semi_axis_b", 0.0);
 
   // Clean wrist upright lock (ring design principles: SDK joint velocity,
   // bilateral PD, capped, no decimation). Holds all 3 wrist joints upright.
@@ -419,6 +422,11 @@ void Node::on_activate(void) {
         const int ra0 = (rh == 0) ? 1 : 0;   // first in-plane axis
         const int ra1 = (rh == 2) ? 1 : 2;   // second in-plane axis
         const double R   = get_parameter("constraints.ring.radius").as_double();
+        // Resolve semi-axes for rim placement (0.0 sentinel falls back to radius).
+        double rim_sa = get_parameter("constraints.ring.semi_axis_a").as_double();
+        double rim_sb = get_parameter("constraints.ring.semi_axis_b").as_double();
+        if (rim_sa <= 0.0) rim_sa = R;
+        if (rim_sb <= 0.0) rim_sb = R;
         const double cc0 = positionCenter[ra0] +
             get_parameter("constraints.ring.center_offset_0").as_double();
         const double cc1 = positionCenter[ra1] +
@@ -429,13 +437,14 @@ void Node::on_activate(void) {
         const bool start_on_rim =
             get_parameter("constraints.ring.start_on_rim").as_bool();
         if (start_on_rim) {
-          const double sa = get_parameter("constraints.ring.start_angle_rad").as_double();
-          positionCenter[ra0] = clamp(cc0 + R * std::cos(sa), -kMaxOffsetM, kMaxOffsetM);
-          positionCenter[ra1] = clamp(cc1 + R * std::sin(sa), -kMaxOffsetM, kMaxOffsetM);
+          const double start_ang = get_parameter("constraints.ring.start_angle_rad").as_double();
+          positionCenter[ra0] = clamp(cc0 + rim_sa * std::cos(start_ang), -kMaxOffsetM, kMaxOffsetM);
+          positionCenter[ra1] = clamp(cc1 + rim_sb * std::sin(start_ang), -kMaxOffsetM, kMaxOffsetM);
         }
         std::string message = "Ring guide: center=(";
         message += std::to_string(cc0) + ", " + std::to_string(cc1);
-        message += ") radius=" + std::to_string(R);
+        message += ") semi_axis_a=" + std::to_string(rim_sa);
+        message += " semi_axis_b=" + std::to_string(rim_sb);
         message += start_on_rim ? " (start ON rim)" : " (start at center)";
         Log(message);
       }
@@ -600,6 +609,16 @@ void Node::on_activate(void) {
   constraints_.ring_damping          = get_parameter("constraints.ring.damping").as_double();
   constraints_.ring_max_force        = get_parameter("constraints.ring.max_force").as_double();
   constraints_.ring_center_deadzone  = get_parameter("constraints.ring.center_deadzone").as_double();
+  // Two-read back-compat for ellipse semi-axes: 0.0 sentinel falls back to ring.radius.
+  {
+    const double r_bc = get_parameter("constraints.ring.radius").as_double();
+    double sa = get_parameter("constraints.ring.semi_axis_a").as_double();
+    double sb = get_parameter("constraints.ring.semi_axis_b").as_double();
+    if (sa <= 0.0) sa = r_bc;
+    if (sb <= 0.0) sb = r_bc;
+    constraints_.ring_semi_axis_a = sa;
+    constraints_.ring_semi_axis_b = sb;
+  }
   constraints_.wrist_upright_enabled    = get_parameter("constraints.wrist_upright.enabled").as_bool();
   constraints_.wrist_upright_stiffness  = get_parameter("constraints.wrist_upright.stiffness").as_double();
   constraints_.wrist_upright_damping    = get_parameter("constraints.wrist_upright.damping").as_double();
