@@ -364,6 +364,18 @@ void Node::ApplyHapticForce(void) {
       for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c)
           constraints_.wrist_home_rotation[r][c] = R[r][c];
+      // Capture the neutral roll joint angle so the slew offset can be
+      // expressed in the joint domain. The Cartesian path captures R[][]
+      // only, so we call dhdGetWristJointAngles once here (first tick only)
+      // to seed the roll-mode offset machinery. wrist_roll_offset_current
+      // starts at zero so the very first activation never steps the roll
+      // setpoint. (Pitfall 2 mitigation — see 80-RESEARCH.md.)
+      {
+        double j0 = 0.0, j1 = 0.0, j2 = 0.0;
+        dhdGetWristJointAngles(&j0, &j1, &j2, device_id_);
+        constraints_.wrist_neutral_roll       = j0;
+        constraints_.wrist_roll_offset_current = 0.0;
+      }
       // Zero the error and omega filter states so the first tick after
       // homing doesn't ramp from stale values (which could push the
       // handle on activation).
@@ -394,6 +406,42 @@ void Node::ApplyHapticForce(void) {
     err_vec[0] = 0.5 * (R_err[2][1] - R_err[1][2]);  // roll error
     err_vec[1] = 0.5 * (R_err[0][2] - R_err[2][0]);  // pitch error
     err_vec[2] = 0.5 * (R_err[1][0] - R_err[0][1]);  // yaw error
+
+    // --- Roll lock-mode offset: slew toward target, clamp to safe range ---
+    // Rate-independent: uses kSlewDt = 1/4000 s (not kDecimatedDt which was
+    // calibrated for a 2 kHz loop that actually runs ~4 kHz). The SDK
+    // measures omega directly so there is no finite-difference velocity here
+    // and no buzz risk. The slewed offset is applied to err_vec[0] (roll)
+    // below so a +/-90 deg target gradually rotates the held roll setpoint.
+    // At 0.5 rad/s slew rate and 0.25 ms tick: step ~= 1.25e-4 rad/tick.
+    {
+      constexpr double kSlewDt = 1.0 / 4000.0;  // s, loop-rate-independent
+      double tgt = wrist_roll_offset_target_.load();
+      // Keep the resulting roll setpoint inside the device's measured joint
+      // range (minus a margin). Offsets are relative to the captured neutral,
+      // so shift the absolute limits by the neutral to get offset bounds.
+      if (constraints_.wrist_roll_range_valid) {
+        const double lo = (constraints_.wrist_roll_min +
+                           constraints_.wrist_roll_range_margin) -
+                           constraints_.wrist_neutral_roll;
+        const double hi = (constraints_.wrist_roll_max -
+                           constraints_.wrist_roll_range_margin) -
+                           constraints_.wrist_neutral_roll;
+        if (tgt < lo) tgt = lo;
+        if (tgt > hi) tgt = hi;
+      }
+      const double step = constraints_.wrist_roll_slew_rate * kSlewDt;
+      double delta = tgt - constraints_.wrist_roll_offset_current;
+      if (delta >  step) delta =  step;
+      if (delta < -step) delta = -step;
+      constraints_.wrist_roll_offset_current += delta;
+    }
+    // Apply the slewed roll offset to the roll error. A +90 deg target
+    // (wrist_roll_offset_current -> +1.5708 rad) subtracts from err_vec[0],
+    // shifting the PD setpoint by that amount. Pitch and yaw errors are
+    // unaffected. Offset is in the rotation-vector domain, consistent with
+    // how the joint_space path applied the offset to its roll setpoint.
+    err_vec[0] -= constraints_.wrist_roll_offset_current;
 
     const int free_ax = constraints_.wrist_lock_free_axis;
     const double Kp = constraints_.wrist_lock_stiffness;
