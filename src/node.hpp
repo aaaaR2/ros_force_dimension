@@ -109,8 +109,8 @@ private:
   // Publishes synchronized device state with selective metrics.
   void PublishDeviceState(void);
 
-  //// Publishes robot force messages.
-  // void PublishForce(void);
+  // Publishes the applied wrist counteracting torque (joint-space) as a Wrench.
+  void PublishAppliedForce(void);
 
   // Subscribes to ROS messages that indicate an instantaneous force to be
   // applied to the robot endpoint.
@@ -206,6 +206,11 @@ private:
   double home_gripper_gap_;
   ConstraintState constraints_;        // cached workspace constraint parameters
   ForceMessage last_force_command_;    // additive external forces (zero-order hold), guarded by force_mutex_
+  // Latest applied wrist JOINT torque (roll=0,pitch=1,yaw=2, N*m) computed by the
+  // 2 kHz/~4 kHz haptic thread, read by the executor thread in PublishAppliedForce().
+  // Guarded by force_mutex_ (same boundary-crossing pattern as last_force_command_).
+  double applied_wrist_torque_[3] = {0.0, 0.0, 0.0};
+  bool   applied_wrist_torque_valid_ = false;  // false until first haptic tick stashes a value
   mutable std::mutex force_mutex_;     // protects last_force_command_ between ROS and haptic threads
   // Target roll offset for the wrist lock mode (rad). Written by the mode
   // topic/param callbacks on the executor thread, read by the 2 kHz haptic
@@ -225,7 +230,7 @@ private:
   rclcpp::Publisher<GripperGapMessage>::SharedPtr gripper_gap_publisher_;
   rclcpp::Publisher<GripperAngleMessage>::SharedPtr gripper_angle_publisher_;
   rclcpp::Publisher<VelocityMessage>::SharedPtr velocity_publisher_;
-  // rclcpp::Publisher<ForceMessage>::SharedPtr force_publisher_;
+  rclcpp::Publisher<ForceMessage>::SharedPtr wrench_publisher_;
   rclcpp::Subscription<ForceMessage>::SharedPtr force_subscription_;
   rclcpp::Subscription<WristModeMessage>::SharedPtr wrist_mode_subscription_;
   rclcpp::Publisher<WristModeMessage>::SharedPtr wrist_mode_publisher_;
