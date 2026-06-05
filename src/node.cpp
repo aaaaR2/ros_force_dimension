@@ -160,7 +160,7 @@ void Node::on_configure(void) {
   declare_parameter<int>("constraints.ring.height_axis", 2);
   declare_parameter<double>("constraints.ring.stiffness", 300.0);
   declare_parameter<double>("constraints.ring.damping", 30.0);
-  declare_parameter<double>("constraints.ring.max_force", 6.0);
+  declare_parameter<double>("constraints.ring.max_force", 10.0);
   declare_parameter<double>("constraints.ring.center_deadzone", 0.005);
   // Ring center planar offset from the autocenter home (the "central cylinder"
   // offset), along the two in-plane axes; and optional start-on-rim placement.
@@ -175,9 +175,9 @@ void Node::on_configure(void) {
   // Clean wrist upright lock (ring design principles: SDK joint velocity,
   // bilateral PD, capped, no decimation). Holds all 3 wrist joints upright.
   declare_parameter<bool>("constraints.wrist_upright.enabled", false);
-  declare_parameter<double>("constraints.wrist_upright.stiffness", 0.6);
-  declare_parameter<double>("constraints.wrist_upright.damping", 0.04);
-  declare_parameter<double>("constraints.wrist_upright.max_torque", 0.02);
+  declare_parameter<double>("constraints.wrist_upright.stiffness", 1.5);
+  declare_parameter<double>("constraints.wrist_upright.damping", 0.08);
+  declare_parameter<double>("constraints.wrist_upright.max_torque", 0.25);
   declare_parameter<double>("constraints.wrist_upright.vel_filter_alpha", 1.0);
   declare_parameter<int>("constraints.wrist_upright.free_axis", -1);
   declare_parameter<double>("constraints.wrist_upright.free_axis_damping", 0.0);
@@ -398,16 +398,19 @@ void Node::on_activate(void) {
       positionCenter[ax1] = off1;
 
       // Pre-rotate each wrist joint during autocenter. SDK joint ordering
-      // for the Sigma.7: slot 3 = roll, 4 = pitch, 5 = yaw (empirical). Each
-      // offset is clamped to ±40° to stay clear of joint limits.
-      constexpr double kMaxJointOffsetRad = 0.7;
-      auto clampJoint = [](double v) {
-        return v < -kMaxJointOffsetRad ? -kMaxJointOffsetRad
-             : (v > kMaxJointOffsetRad ?  kMaxJointOffsetRad : v);
+      // for the Sigma.7: slot 3 = roll, 4 = pitch, 5 = yaw (empirical). Roll
+      // and pitch stay clamped to ±40° to stay clear of their joint limits;
+      // yaw (w2) has a wider safe range (~±80°) so the wrist-flexion task can
+      // start the free yaw axis at a flexed pose (e.g. 75°). The device's own
+      // limits still bound the actual drdMoveTo (see logged wrist joint range).
+      constexpr double kMaxJointOffsetRad = 0.7;     // roll/pitch (±40°)
+      constexpr double kMaxYawOffsetRad   = 1.5708;  // yaw / w2 (±90°, pi/2)
+      auto clampJoint = [](double v, double lim) {
+        return v < -lim ? -lim : (v > lim ? lim : v);
       };
-      double j0 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_0_rad").as_double());
-      double j1 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_1_rad").as_double());
-      double j2 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_2_rad").as_double());
+      double j0 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_0_rad").as_double(), kMaxJointOffsetRad);
+      double j1 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_1_rad").as_double(), kMaxJointOffsetRad);
+      double j2 = clampJoint(get_parameter("constraints.wrist_lock.home_joint_2_rad").as_double(), kMaxYawOffsetRad);
       positionCenter[3] = j0;
       positionCenter[4] = j1;
       positionCenter[5] = j2;
