@@ -566,6 +566,17 @@ void Node::ApplyHapticForce(void) {
       std::abs(ty) < kIdleTorqueNm && std::abs(tz) < kIdleTorqueNm &&
       std::abs(fg) < kIdleForceN &&
       (!joint_space_active || joint_torques_idle);
+  // Stash the applied wrist joint torque for the ROS executor thread.
+  // Runs every tick (including idle ticks where wrist_joint_tau is ~0) so the
+  // published value always reflects what is (or would be) sent this tick.
+  // Guarded by force_mutex_ — the same mutex that protects last_force_command_.
+  {
+    std::lock_guard<std::mutex> lock(force_mutex_);
+    applied_wrist_torque_[0] = wrist_joint_tau[0];
+    applied_wrist_torque_[1] = wrist_joint_tau[1];
+    applied_wrist_torque_[2] = wrist_joint_tau[2];
+    applied_wrist_torque_valid_ = true;
+  }
   if (idle) return;
 
   int result = 0;

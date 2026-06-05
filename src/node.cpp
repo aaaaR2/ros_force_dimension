@@ -102,9 +102,9 @@ void Node::on_configure(void) {
   topic = DEVICE_STATE_FEEDBACK_TOPIC;
   device_state_publisher_ = create_publisher<DeviceStateMessage>(topic, qos);
 
-  //// Create the force state publisher.
-  // topic = FORCE_FEEDBACK_TOPIC;
-  // force_publisher = create_publisher<force_message>(topic, qos);
+  // Create the applied-force (wrist torque) feedback publisher.
+  topic = FORCE_FEEDBACK_TOPIC;
+  wrench_publisher_ = create_publisher<ForceMessage>(topic, qos);
 
   // Initialize ROS2 parameters.
   declare_parameter<float>("sample_interval_s", 0.025);
