@@ -47,6 +47,7 @@ void force_dimension::Node::PublishState() {
   PublishVelocity();
   PublishOrientation();
   PublishWristJoints();
+  PublishAppliedForce();
 }
 
 void force_dimension::Node::PublishPosition() {
@@ -216,6 +217,28 @@ void force_dimension::Node::PublishDeviceState() {
   }
 
   device_state_publisher_->publish(msg);
+}
+
+void force_dimension::Node::PublishAppliedForce() {
+  if (!IsPublishableSample("force")) return;
+  double tau[3];
+  bool valid;
+  {
+    std::lock_guard<std::mutex> lock(force_mutex_);
+    tau[0] = applied_wrist_torque_[0];
+    tau[1] = applied_wrist_torque_[1];
+    tau[2] = applied_wrist_torque_[2];
+    valid  = applied_wrist_torque_valid_;
+  }
+  if (!valid) return;  // haptic thread has not produced a torque yet
+  auto message = ForceMessage();
+  // Wrist torque feedback: force stays zero; torque carries joint-space tau.
+  // x = roll (w0), y = pitch (w1), z = yaw (w2). The yaw component is the
+  // counteracting viscous damping the operator reads in Unity.
+  message.torque.x = tau[0];
+  message.torque.y = tau[1];
+  message.torque.z = tau[2];
+  wrench_publisher_->publish(message);
 }
 
 #endif // FORCE_DIMENSION_PUBLISH_H_

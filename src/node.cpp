@@ -118,6 +118,7 @@ void Node::on_configure(void) {
   declare_parameter<int>("feedback_sample_decimation.orientation", 50);
   declare_parameter<int>("feedback_sample_decimation.wrist_joint_angles", 50);
   declare_parameter<int>("feedback_sample_decimation.state", 50);
+  declare_parameter<int>("feedback_sample_decimation.force", 50);
   declare_parameter<bool>("device_state_metrics.include_position", true);
   declare_parameter<bool>("device_state_metrics.include_velocity", true);
   declare_parameter<bool>("device_state_metrics.include_orientation", true);
