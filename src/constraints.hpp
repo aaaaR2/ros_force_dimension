@@ -69,6 +69,37 @@ struct ConstraintState {
   // loop falls back to the auto-homed channel_offset as the center.
   double ring_center[2]       = {0.0, 0.0};
   bool   ring_center_valid    = false;
+  // Ring center base (autocenter home position, in-plane axes) captured at home,
+  // plus the live-tunable planar offset. ring_center = ring_base + center_offset,
+  // so constraints.ring.center_offset_0/1 can be moved live via ros2 param set.
+  double ring_base[2]          = {0.0, 0.0};
+  double ring_center_offset[2] = {0.0, 0.0};
+
+  // Plane lock ("2D constraint") — the ring's height-axis hold as a standalone
+  // primitive: a BILATERAL spring+damper locking ONE axis to its captured home
+  // value, leaving the orthogonal plane completely free. Use for tasks where
+  // the hand should float in a 2D plane without a ring/rim pull (e.g.
+  // wrist_flexion without the orbit). Same proven math as the ring height
+  // lock: bilateral damping + per-component force cap => no limit cycle (the
+  // channel walls damp outward-only and buzz when used as a continuous hold).
+  // Force-mode friendly; centered at the auto-homed channel_offset.
+  bool   plane_lock_enabled   = false;
+  int    plane_lock_axis      = 2;      // locked axis (0=X, 1=Y, 2=Z)
+  double plane_lock_stiffness = 300.0;  // N/m
+  double plane_lock_damping   = 30.0;   // N/(m/s), bilateral
+  double plane_lock_max_force = 10.0;   // N clamp
+
+  // Spherical outer boundary — free everywhere INSIDE a sphere of radius
+  // sphere_radius centered at the captured home; past the rim an inward
+  // radial spring pushes back, with damping on the OUTWARD radial velocity
+  // only (the proven circle-boundary convention: never sticky on return).
+  // Keeps the effector away from the hard mechanical workspace limits.
+  // Combined with plane_lock this yields a free disc in the task plane.
+  bool   sphere_boundary_enabled   = false;
+  double sphere_boundary_radius    = 0.05;   // m
+  double sphere_boundary_stiffness = 300.0;  // N/m
+  double sphere_boundary_damping   = 30.0;   // N/(m/s), outward radial only
+  double sphere_boundary_max_force = 10.0;   // N, per-component clamp
 
   // Clean wrist UPRIGHT lock — same design principles as the ring constraint:
   // force-mode, bilateral spring+damper, damping on the SDK's MEASURED joint
@@ -106,6 +137,28 @@ struct ConstraintState {
   // knob damping_progression can ramp.
   int    wrist_upright_free_axis        = -1;
   double wrist_upright_free_axis_damping = 0.0;  // N*m*s/rad on the free joint
+  // Separate torque cap for the free axis. max_torque bounds the LOCKED
+  // joints (lock firmness / limit-cycle energy — shrink it toward the SDK's
+  // 0.02 for stability); this cap bounds the free-axis viscous torque
+  // independently so the yaw damping keeps working when max_torque is small.
+  double wrist_upright_free_axis_max_torque = 0.25;  // N*m
+  // NOTE (Phase 81 HIL): lead compensation (omega + T*omega_dot prediction)
+  // and a velocity deadband were tried on the free axis to push b past ~0.1
+  // without oscillation, and REVERTED — the finite-differenced omega_dot is
+  // noise-amplified ~x4000 and the deadband edge steps the torque, both of
+  // which made the limit cycle worse. Free axis stays plain -b*omega_filt.
+  //
+  // ROOT CAUSE (measured via capture_wrist_oscillation.py): the SDK velocity
+  // estimator defaults to a 20 ms averaging window (DHD_VELOCITY_WINDOW),
+  // ~10 ms group delay. Total velocity-path lag ~22 ms rotates -b*omega by
+  // +249 deg at the observed 14 Hz limit cycle (torque measured at +69 deg
+  // vs velocity = actively pumping). Fix: shorten the estimator window via
+  // dhdConfigAngularVelocity (velocity_estimator.angular_window_ms below).
+  // SDK window for the angular/wrist velocity estimator, in ms. 20 = SDK
+  // default. Applied by the haptic thread whenever it differs from the
+  // last-applied value, so it can be swept live via ros2 param set.
+  int velocity_angular_window_ms      = 20;
+  int velocity_angular_window_applied = -1;  // last value pushed to the SDK
 
   // Circle constraint (radial boundary in the plane orthogonal to the primary channel axis).
   // Plane axes are always the two axes that are NOT the primary channel axis (0=X by default).

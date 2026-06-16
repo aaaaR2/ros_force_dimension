@@ -173,6 +173,24 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.ring.semi_axis_a", 0.0);
   declare_parameter<double>("constraints.ring.semi_axis_b", 0.0);
 
+  // Plane lock ("2D constraint"): bilateral spring+damper holding ONE axis at
+  // its captured home (the ring's height lock as a standalone primitive); the
+  // orthogonal plane stays free.
+  declare_parameter<bool>("constraints.plane_lock.enabled", false);
+  declare_parameter<int>("constraints.plane_lock.axis", 2);
+  declare_parameter<double>("constraints.plane_lock.stiffness", 300.0);
+  declare_parameter<double>("constraints.plane_lock.damping", 30.0);
+  declare_parameter<double>("constraints.plane_lock.max_force", 10.0);
+
+  // Spherical outer boundary: free inside radius (centered at captured home),
+  // inward spring + outward-only radial damping past the rim. Keeps the
+  // effector off the hard mechanical workspace limits.
+  declare_parameter<bool>("constraints.sphere_boundary.enabled", false);
+  declare_parameter<double>("constraints.sphere_boundary.radius", 0.05);
+  declare_parameter<double>("constraints.sphere_boundary.stiffness", 300.0);
+  declare_parameter<double>("constraints.sphere_boundary.damping", 30.0);
+  declare_parameter<double>("constraints.sphere_boundary.max_force", 10.0);
+
   // Clean wrist upright lock (ring design principles: SDK joint velocity,
   // bilateral PD, capped, no decimation). Holds all 3 wrist joints upright.
   declare_parameter<bool>("constraints.wrist_upright.enabled", false);
@@ -182,6 +200,15 @@ void Node::on_configure(void) {
   declare_parameter<double>("constraints.wrist_upright.vel_filter_alpha", 1.0);
   declare_parameter<int>("constraints.wrist_upright.free_axis", -1);
   declare_parameter<double>("constraints.wrist_upright.free_axis_damping", 0.0);
+  // Free-axis torque cap, decoupled from max_torque (which bounds only the
+  // locked joints) so a small stability cap on the lock does not neuter the
+  // yaw viscous damping.
+  declare_parameter<double>("constraints.wrist_upright.free_axis_max_torque", 0.25);
+  // SDK angular-velocity estimator window (ms). The SDK default of 20 ms adds
+  // ~10 ms of group delay to dhdGetJointVelocities — the dominant lag that
+  // destabilizes -b*omega damping at high b (measured 14 Hz limit cycle).
+  // Shorter = less lag, noisier estimate. Applied live by the haptic thread.
+  declare_parameter<int>("velocity_estimator.angular_window_ms", 20);
 
   // Wrist orientation lock: PD on two of three Cartesian rotation axes,
   // leaves the third (default: Z/yaw) free. Applies in the 2 kHz loop.
@@ -304,6 +331,21 @@ void Node::on_activate(void) {
       std::string message = "Force Dimension device detected: ";
       message += dhdGetSystemName();
       Log(message);
+    }
+
+    // Log the USB COM mode for the record. ASYNC (1) is the SDK default and
+    // already the lower-jitter option (parallelized read/write); SYNC (0)
+    // serializes transactions. There is no SDK-side fix for the usbipd/WSL2
+    // per-transaction latency floor (~12 ms velocity-path lag measured).
+    {
+      const int com_mode = dhdGetComMode(device_id_);
+      const char* name = (com_mode == DHD_COM_MODE_SYNC)    ? "SYNC"
+                       : (com_mode == DHD_COM_MODE_ASYNC)   ? "ASYNC"
+                       : (com_mode == DHD_COM_MODE_VIRTUAL) ? "VIRTUAL"
+                       : (com_mode == DHD_COM_MODE_NETWORK) ? "NETWORK"
+                                                            : "UNKNOWN";
+      Log("USB COM mode: " + std::string(name) + " (" +
+          std::to_string(com_mode) + ")");
     }
 
     // Initialise device if not already done (requires holding near centre).
@@ -430,10 +472,16 @@ void Node::on_activate(void) {
         double rim_sb = get_parameter("constraints.ring.semi_axis_b").as_double();
         if (rim_sa <= 0.0) rim_sa = R;
         if (rim_sb <= 0.0) rim_sb = R;
-        const double cc0 = positionCenter[ra0] +
-            get_parameter("constraints.ring.center_offset_0").as_double();
-        const double cc1 = positionCenter[ra1] +
-            get_parameter("constraints.ring.center_offset_1").as_double();
+        const double coff0 = get_parameter("constraints.ring.center_offset_0").as_double();
+        const double coff1 = get_parameter("constraints.ring.center_offset_1").as_double();
+        // Capture the base center + offset separately so center_offset_0/1 stays
+        // live-tunable (the parameter callback recomputes ring_center = base + offset).
+        constraints_.ring_base[0] = positionCenter[ra0];
+        constraints_.ring_base[1] = positionCenter[ra1];
+        constraints_.ring_center_offset[0] = coff0;
+        constraints_.ring_center_offset[1] = coff1;
+        const double cc0 = positionCenter[ra0] + coff0;
+        const double cc1 = positionCenter[ra1] + coff1;
         constraints_.ring_center[0] = cc0;
         constraints_.ring_center[1] = cc1;
         constraints_.ring_center_valid = true;
@@ -622,6 +670,16 @@ void Node::on_activate(void) {
     constraints_.ring_semi_axis_a = sa;
     constraints_.ring_semi_axis_b = sb;
   }
+  constraints_.plane_lock_enabled   = get_parameter("constraints.plane_lock.enabled").as_bool();
+  constraints_.plane_lock_axis      = get_parameter("constraints.plane_lock.axis").as_int();
+  constraints_.plane_lock_stiffness = get_parameter("constraints.plane_lock.stiffness").as_double();
+  constraints_.plane_lock_damping   = get_parameter("constraints.plane_lock.damping").as_double();
+  constraints_.plane_lock_max_force = get_parameter("constraints.plane_lock.max_force").as_double();
+  constraints_.sphere_boundary_enabled   = get_parameter("constraints.sphere_boundary.enabled").as_bool();
+  constraints_.sphere_boundary_radius    = get_parameter("constraints.sphere_boundary.radius").as_double();
+  constraints_.sphere_boundary_stiffness = get_parameter("constraints.sphere_boundary.stiffness").as_double();
+  constraints_.sphere_boundary_damping   = get_parameter("constraints.sphere_boundary.damping").as_double();
+  constraints_.sphere_boundary_max_force = get_parameter("constraints.sphere_boundary.max_force").as_double();
   constraints_.wrist_upright_enabled    = get_parameter("constraints.wrist_upright.enabled").as_bool();
   constraints_.wrist_upright_stiffness  = get_parameter("constraints.wrist_upright.stiffness").as_double();
   constraints_.wrist_upright_damping    = get_parameter("constraints.wrist_upright.damping").as_double();
@@ -629,6 +687,11 @@ void Node::on_activate(void) {
   constraints_.wrist_upright_vel_filter_alpha = get_parameter("constraints.wrist_upright.vel_filter_alpha").as_double();
   constraints_.wrist_upright_free_axis = get_parameter("constraints.wrist_upright.free_axis").as_int();
   constraints_.wrist_upright_free_axis_damping = get_parameter("constraints.wrist_upright.free_axis_damping").as_double();
+  constraints_.wrist_upright_free_axis_max_torque =
+      get_parameter("constraints.wrist_upright.free_axis_max_torque").as_double();
+  constraints_.velocity_angular_window_ms =
+      static_cast<int>(get_parameter("velocity_estimator.angular_window_ms").as_int());
+  constraints_.velocity_angular_window_applied = -1;  // force (re)apply on first tick
   constraints_.wrist_upright_homed   = false;
   constraints_.homed                 = false;
   for (int i = 0; i < 3; ++i) constraints_.channel_offset[i] = 0.0;

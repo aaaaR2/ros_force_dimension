@@ -193,6 +193,25 @@ void Node::ApplyHapticForce(void) {
     // velocity (rate-independent: no finite-difference, no decimation/ZOH, no
     // LPF), torque-capped. Holds all three wrist joints at the captured upright
     // pose. Overdamped gains (per SDK hold.cpp) so it cannot buzz.
+    // Apply the SDK angular-velocity estimator window when it changes (live
+    // tunable). The SDK default 20 ms window contributes ~10 ms of group
+    // delay to dhdGetJointVelocities — the dominant share of the lag that
+    // turns -b*omega into an energy pump at high damping (measured: +69 deg
+    // torque-vs-velocity phase at the 14 Hz limit cycle). Shorter window =
+    // less lag, noisier estimate; the vel_filter_alpha LPF absorbs the noise.
+    if (constraints_.velocity_angular_window_ms !=
+        constraints_.velocity_angular_window_applied) {
+      const int win = constraints_.velocity_angular_window_ms;
+      if (win > 0 &&
+          dhdConfigAngularVelocity(win, DHD_VELOCITY_WINDOWING, device_id_) >= 0) {
+        Log("Angular velocity estimator window set to " + std::to_string(win) +
+            " ms");
+      } else {
+        Log("Failed to set angular velocity estimator window: " +
+            std::string(dhdErrorGetLastStr()));
+      }
+      constraints_.velocity_angular_window_applied = win;
+    }
     double j_now[3] = {0.0, 0.0, 0.0};
     double jvel[DHD_MAX_DOF] = {};
     dhdGetWristJointAngles(&j_now[0], &j_now[1], &j_now[2], device_id_);
@@ -223,13 +242,26 @@ void Node::ApplyHapticForce(void) {
       if (i == free_ax) {
         // Released axis: viscous damping only, no position lock (e.g. yaw for
         // the wrist-flexion case). b_free can be ramped by damping_progression.
+        // NOTE: lead compensation + velocity deadband were tried here (Phase
+        // 81 HIL) to push b past ~0.1 without oscillation and made it WORSE —
+        // the deadband edge steps the torque discontinuously and the
+        // noise-fed omega_dot lead injects its own chatter. Keep plain
+        // -b*omega; the stable ceiling for b is found empirically via
+        // max_damping in the launch files.
         t = -b_free * constraints_.wrist_upright_omega_filt[i];
       } else {
         t = -Kp_u * (j_now[i] - constraints_.wrist_upright_home[i])
             - Kv_u * constraints_.wrist_upright_omega_filt[i];
       }
-      if (t >  tmax) t =  tmax;
-      if (t < -tmax) t = -tmax;
+      // Per-axis torque cap: the locked roll/pitch joints use max_torque (the
+      // lock-firmness / oscillation-energy bound, SDK hold.cpp pattern); the
+      // free axis has its OWN cap so shrinking the lock cap for stability
+      // does not also neuter the yaw viscous damping.
+      const double cap = (i == free_ax)
+          ? constraints_.wrist_upright_free_axis_max_torque
+          : tmax;
+      if (t >  cap) t =  cap;
+      if (t < -cap) t = -cap;
       wrist_joint_tau[i] = t;
     }
   } else if (constraints_.wrist_lock_enabled && got_orientation) {

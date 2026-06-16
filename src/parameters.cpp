@@ -88,6 +88,42 @@ force_dimension::Node::set_parameters_callback(
       constraints_.ring_max_force = parameter.as_double();
     if (parameter.get_name() == "constraints.ring.center_deadzone")
       constraints_.ring_center_deadzone = parameter.as_double();
+    // Live-tunable ring center: ring_center = ring_base (captured at home) + offset.
+    // Lets the operator nudge the orbit center with ros2 param set while running.
+    if (parameter.get_name() == "constraints.ring.center_offset_0") {
+      constraints_.ring_center_offset[0] = parameter.as_double();
+      if (constraints_.ring_center_valid)
+        constraints_.ring_center[0] =
+            constraints_.ring_base[0] + constraints_.ring_center_offset[0];
+    }
+    if (parameter.get_name() == "constraints.ring.center_offset_1") {
+      constraints_.ring_center_offset[1] = parameter.as_double();
+      if (constraints_.ring_center_valid)
+        constraints_.ring_center[1] =
+            constraints_.ring_base[1] + constraints_.ring_center_offset[1];
+    }
+    // Plane lock ("2D constraint"), live-tunable for bring-up.
+    if (parameter.get_name() == "constraints.plane_lock.enabled")
+      constraints_.plane_lock_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.plane_lock.axis")
+      constraints_.plane_lock_axis = parameter.as_int();
+    if (parameter.get_name() == "constraints.plane_lock.stiffness")
+      constraints_.plane_lock_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.plane_lock.damping")
+      constraints_.plane_lock_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.plane_lock.max_force")
+      constraints_.plane_lock_max_force = parameter.as_double();
+    // Spherical outer boundary, live-tunable for bring-up.
+    if (parameter.get_name() == "constraints.sphere_boundary.enabled")
+      constraints_.sphere_boundary_enabled = parameter.as_bool();
+    if (parameter.get_name() == "constraints.sphere_boundary.radius")
+      constraints_.sphere_boundary_radius = parameter.as_double();
+    if (parameter.get_name() == "constraints.sphere_boundary.stiffness")
+      constraints_.sphere_boundary_stiffness = parameter.as_double();
+    if (parameter.get_name() == "constraints.sphere_boundary.damping")
+      constraints_.sphere_boundary_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.sphere_boundary.max_force")
+      constraints_.sphere_boundary_max_force = parameter.as_double();
     // Clean wrist upright lock, live-tunable for bring-up.
     if (parameter.get_name() == "constraints.wrist_upright.enabled")
       constraints_.wrist_upright_enabled = parameter.as_bool();
@@ -103,6 +139,13 @@ force_dimension::Node::set_parameters_callback(
       constraints_.wrist_upright_free_axis = parameter.as_int();
     if (parameter.get_name() == "constraints.wrist_upright.free_axis_damping")
       constraints_.wrist_upright_free_axis_damping = parameter.as_double();
+    if (parameter.get_name() == "constraints.wrist_upright.free_axis_max_torque")
+      constraints_.wrist_upright_free_axis_max_torque = parameter.as_double();
+    // SDK velocity estimator window: the haptic thread applies it on the next
+    // tick when the desired value differs from the last-applied one.
+    if (parameter.get_name() == "velocity_estimator.angular_window_ms")
+      constraints_.velocity_angular_window_ms =
+          static_cast<int>(parameter.as_int());
     // Wrist orientation lock (live-tunable via ROS parameter service).
     if (parameter.get_name() == "constraints.wrist_lock.stiffness")
       constraints_.wrist_lock_stiffness = parameter.as_double();

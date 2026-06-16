@@ -186,6 +186,49 @@ void Node::ComputeConstraintForce(const double pos[3], const double vel[3],
     const double e_h = pos[h] - constraints_.channel_offset[h];
     force_out[h] += clampf(-Kp * e_h - Kv * vel[h]);
   }
+
+  // --- Plane lock ("2D constraint"): hold ONE axis at home, plane free ---
+  // The ring's height-axis hold as a standalone primitive: bilateral
+  // spring+damper with a force cap (bilateral damping => no limit cycle,
+  // unlike the outward-only channel walls). The two orthogonal axes are
+  // untouched, so the effector floats freely in the task plane.
+  if (constraints_.plane_lock_enabled && constraints_.homed) {
+    const int ax = constraints_.plane_lock_axis;
+    if (ax >= 0 && ax <= 2) {
+      const double Kp = constraints_.plane_lock_stiffness;
+      const double Kv = constraints_.plane_lock_damping;
+      const double fmax = constraints_.plane_lock_max_force;
+      const double e = pos[ax] - constraints_.channel_offset[ax];
+      double f = -Kp * e - Kv * vel[ax];
+      if (f >  fmax) f =  fmax;
+      if (f < -fmax) f = -fmax;
+      force_out[ax] += f;
+    }
+  }
+
+  // --- Spherical outer boundary: free inside, soft wall outside ---
+  // 3D radial dead-zone boundary centered at the captured home. Zero force
+  // inside sphere_boundary_radius; past the rim an inward spring pushes back
+  // with damping on the outward radial velocity only (circle-boundary
+  // convention: returning to the workspace is never damped/sticky). Keeps the
+  // effector off the hard mechanical workspace limits.
+  if (constraints_.sphere_boundary_enabled && constraints_.homed) {
+    const double Kp = constraints_.sphere_boundary_stiffness;
+    const double Kv = constraints_.sphere_boundary_damping;
+    const double fmax = constraints_.sphere_boundary_max_force;
+    double d[3];
+    for (int i = 0; i < 3; ++i) d[i] = pos[i] - constraints_.channel_offset[i];
+    const double r = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    const double depth = r - constraints_.sphere_boundary_radius;
+    if (depth > 0.0 && r > 1e-9) {
+      const double n[3] = {d[0] / r, d[1] / r, d[2] / r};
+      const double v_radial = vel[0] * n[0] + vel[1] * n[1] + vel[2] * n[2];
+      const double damp = (v_radial > 0.0) ? Kv * v_radial : 0.0;
+      double f_mag = -(Kp * depth + damp);
+      if (f_mag < -fmax) f_mag = -fmax;  // inward push, capped
+      for (int i = 0; i < 3; ++i) force_out[i] += f_mag * n[i];
+    }
+  }
 }
 
 #endif // FORCE_DIMENSION_CONSTRAINTS_CPP_
