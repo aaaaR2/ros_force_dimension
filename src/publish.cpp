@@ -48,6 +48,47 @@ void force_dimension::Node::PublishState() {
   PublishOrientation();
   PublishWristJoints();
   PublishAppliedForce();
+  PublishRawSample();
+}
+
+void force_dimension::Node::PublishRawSample() {
+  if (!IsPublishableSample("raw_sample")) return;
+  DeviceSnapshot snap;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    snap = device_snapshot_;
+  }
+  if (!snap.valid) return;
+
+  auto msg = RawSampleMessage();
+  // SAMPLE time captured in the haptic loop, not the publish time.
+  msg.header.stamp = rclcpp::Time(snap.sample_stamp_ns);
+  msg.header.frame_id = "haptic_device";
+  msg.position.x = snap.pos[0];
+  msg.position.y = snap.pos[1];
+  msg.position.z = snap.pos[2];
+  msg.velocity.x = snap.vel[0];
+  msg.velocity.y = snap.vel[1];
+  msg.velocity.z = snap.vel[2];
+  msg.orientation.x = snap.ori_rad[0];
+  msg.orientation.y = snap.ori_rad[1];
+  msg.orientation.z = snap.ori_rad[2];
+  msg.angular_velocity.x = snap.omega[0];
+  msg.angular_velocity.y = snap.omega[1];
+  msg.angular_velocity.z = snap.omega[2];
+  msg.wrist_joint_angles.x = snap.wrist_joint_rad[0];
+  msg.wrist_joint_angles.y = snap.wrist_joint_rad[1];
+  msg.wrist_joint_angles.z = snap.wrist_joint_rad[2];
+  msg.applied_force.x = snap.applied_force[0];
+  msg.applied_force.y = snap.applied_force[1];
+  msg.applied_force.z = snap.applied_force[2];
+  msg.applied_torque.x = snap.applied_torque[0];
+  msg.applied_torque.y = snap.applied_torque[1];
+  msg.applied_torque.z = snap.applied_torque[2];
+  msg.gripper_gap = snap.gripper_gap_m;
+  msg.gripper_angle = snap.gripper_angle_rad;
+  msg.button_mask = snap.button_mask;
+  raw_sample_publisher_->publish(msg);
 }
 
 void force_dimension::Node::PublishPosition() {
@@ -184,7 +225,9 @@ void force_dimension::Node::PublishDeviceState() {
   bool include_buttons = get_parameter("device_state_metrics.include_buttons").as_bool();
 
   auto msg = DeviceStateMessage();
-  msg.header.stamp = this->now();
+  // Sample time from the haptic loop (falls back to publish time if a sample
+  // has not landed yet — guarded by snap.valid above, so it always has one).
+  msg.header.stamp = rclcpp::Time(snap.sample_stamp_ns);
   msg.header.frame_id = "haptic_device";
 
   msg.has_position = include_position;

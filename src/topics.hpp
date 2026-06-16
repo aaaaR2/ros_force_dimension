@@ -74,6 +74,11 @@ const char WRIST_JOINT_FEEDBACK_TOPIC[] = "feedback/wrist_joint_angles";
  */
 const char DEVICE_STATE_FEEDBACK_TOPIC[] = "feedback/state";
 
+/** Topic for the full-rate raw data-collection sample stream
+ *  (force_dimension_msgs/RawSample), recorded into the session mcap.
+ */
+const char RAW_SAMPLE_FEEDBACK_TOPIC[] = "feedback/raw_sample";
+
 /** Topic for selecting the wrist lock mode (upright / left / right).
  *  Subscribed as std_msgs/String; Unity publishes here to switch the locked
  *  roll orientation live within a recording session.

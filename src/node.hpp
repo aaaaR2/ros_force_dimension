@@ -112,6 +112,9 @@ private:
   // Publishes the applied wrist counteracting torque (joint-space) as a Wrench.
   void PublishAppliedForce(void);
 
+  // Publishes the full-rate raw data-collection sample (sample-time stamped).
+  void PublishRawSample(void);
+
   // Subscribes to ROS messages that indicate an instantaneous force to be
   // applied to the robot endpoint.
   void SubscribeForce(void);
@@ -181,6 +184,13 @@ private:
     double gripper_gap_m = 0.0;
     double gripper_angle_rad = 0.0;
     int    button_mask = 0;
+    // Commanded output this tick (for the raw data-collection record).
+    double applied_force[3] = {0.0, 0.0, 0.0};   // Cartesian force fx,fy,fz (N)
+    double applied_torque[3] = {0.0, 0.0, 0.0};  // wrist joint torque w0,w1,w2 (N*m)
+    // Sample time captured in the haptic loop (ROS clock, nanoseconds). 0 until
+    // the first tick. Used as RawSample/DeviceState header.stamp so the stamp
+    // is the SAMPLE time, not the (later, jittery) publish time.
+    int64_t sample_stamp_ns = 0;
     bool   has_orientation = false;
     bool   has_wrist_joint = false;
     bool   has_gripper = false;
@@ -237,6 +247,7 @@ private:
   rclcpp::Publisher<OrientationMessage>::SharedPtr orientation_publisher_;
   rclcpp::Publisher<WristJointMessage>::SharedPtr wrist_joint_publisher_;
   rclcpp::Publisher<DeviceStateMessage>::SharedPtr device_state_publisher_;
+  rclcpp::Publisher<RawSampleMessage>::SharedPtr raw_sample_publisher_;
   OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 };
 

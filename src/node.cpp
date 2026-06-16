@@ -106,6 +106,10 @@ void Node::on_configure(void) {
   topic = FORCE_FEEDBACK_TOPIC;
   wrench_publisher_ = create_publisher<ForceMessage>(topic, qos);
 
+  // Create the full-rate raw data-collection sample publisher.
+  topic = RAW_SAMPLE_FEEDBACK_TOPIC;
+  raw_sample_publisher_ = create_publisher<RawSampleMessage>(topic, qos);
+
   // Initialize ROS2 parameters.
   declare_parameter<float>("sample_interval_s", 0.025);
   declare_parameter<bool>("disable_hardware", false);
@@ -119,6 +123,9 @@ void Node::on_configure(void) {
   declare_parameter<int>("feedback_sample_decimation.wrist_joint_angles", 50);
   declare_parameter<int>("feedback_sample_decimation.state", 50);
   declare_parameter<int>("feedback_sample_decimation.force", 50);
+  // Raw data-collection sample. Default 1 = publish every timer tick, so at
+  // the 2 kHz sample timer (unity_low_latency.yaml) this records at 2 kHz.
+  declare_parameter<int>("feedback_sample_decimation.raw_sample", 1);
   declare_parameter<bool>("device_state_metrics.include_position", true);
   declare_parameter<bool>("device_state_metrics.include_velocity", true);
   declare_parameter<bool>("device_state_metrics.include_orientation", true);

@@ -20,6 +20,7 @@
 #include "geometry_msgs/msg/vector3.hpp"
 #include "geometry_msgs/msg/wrench.hpp"
 #include "force_dimension_msgs/msg/device_state.hpp"
+#include "force_dimension_msgs/msg/raw_sample.hpp"
 #include "std_msgs/msg/string.hpp"
 
 // Declare namespace.
@@ -73,6 +74,9 @@ typedef example_interfaces::msg::Float64 GripperAngleMessage;
  *
  */
 typedef force_dimension_msgs::msg::DeviceState DeviceStateMessage;
+
+/** Full-rate raw data-collection sample ROS message type definition. */
+typedef force_dimension_msgs::msg::RawSample RawSampleMessage;
 
 /** Wrist lock-mode command/feedback ROS message type definition.
  *  Carries the mode string ("upright" | "left" | "right").

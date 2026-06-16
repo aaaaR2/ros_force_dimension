@@ -522,8 +522,13 @@ void Node::ApplyHapticForce(void) {
       }
     }
   }
+  // Sample time for this haptic tick (ROS clock). Captured here, in the loop,
+  // so the recorded RawSample/DeviceState header.stamp is the SAMPLE time, not
+  // the later, jittery executor publish time.
+  const int64_t sample_stamp_ns = this->now().nanoseconds();
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    device_snapshot_.sample_stamp_ns = sample_stamp_ns;
     device_snapshot_.pos[0] = pos[0];
     device_snapshot_.pos[1] = pos[1];
     device_snapshot_.pos[2] = pos[2];
@@ -541,6 +546,15 @@ void Node::ApplyHapticForce(void) {
     }
     device_snapshot_.gripper_gap_m = currentGap;
     device_snapshot_.has_gripper = has_gripper_snap;
+    // Commanded output this tick, coherent with the kinematics above (same
+    // sample_stamp). fx/fy/fz = constraint+external Cartesian force;
+    // wrist_joint_tau = the wrist_upright PD/damping joint torque.
+    device_snapshot_.applied_force[0] = fx;
+    device_snapshot_.applied_force[1] = fy;
+    device_snapshot_.applied_force[2] = fz;
+    device_snapshot_.applied_torque[0] = wrist_joint_tau[0];
+    device_snapshot_.applied_torque[1] = wrist_joint_tau[1];
+    device_snapshot_.applied_torque[2] = wrist_joint_tau[2];
     if (update_slow_fields) {
       device_snapshot_.button_mask = button_mask_snap;
       device_snapshot_.gripper_angle_rad = gripper_angle_snap;
