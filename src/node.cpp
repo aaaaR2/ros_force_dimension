@@ -34,6 +34,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 // Select namespace.
 // using namespace force_dimension;
@@ -299,6 +300,18 @@ void Node::on_configure(void) {
  */
 void Node::on_activate(void) {
 
+  // Startup errors must not fall through into force control. The node is
+  // not active yet, so on_error() cannot close a partially opened device.
+  const auto fail_startup = [this](const std::string& message) {
+    RCLCPP_ERROR(get_logger(), "%s", message.c_str());
+    if (!hardware_disabled_ && device_id_ >= 0) {
+      drdStop(false, device_id_);
+      drdClose(device_id_);
+      device_id_ = -1;
+    }
+    throw std::runtime_error(message);
+  };
+
   // Check to see if hardware has been disabled.
   // This is done once, at the time of activation, and stored in a member
   // variable while active.
@@ -325,13 +338,11 @@ void Node::on_activate(void) {
     if (device_id_ < 0) {
       std::string message = "Cannot open Force Dimension device: ";
       message += dhdErrorGetLastStr();
-      Log(message);
-      on_error();
+      fail_startup(message);
     }
 
     if (!drdIsSupported()) {
-      Log("Device does not support DRD robotics library.");
-      on_error();
+      fail_startup("Device does not support DRD robotics library.");
     }
 
     {
@@ -359,8 +370,7 @@ void Node::on_activate(void) {
     if (!drdIsInitialized() && drdAutoInit() < 0) {
       std::string message = "Cannot initialise device: ";
       message += dhdErrorGetLastStr();
-      Log(message);
-      on_error();
+      fail_startup(message);
     }
 
     // Stop any running regulation so we can reconfigure regulate flags.
@@ -415,8 +425,7 @@ void Node::on_activate(void) {
     if (drdStart() < 0) {
       std::string message = "Cannot start DRD regulation: ";
       message += dhdErrorGetLastStr();
-      Log(message);
-      on_error();
+      fail_startup(message);
     }
 
     // Move base + wrist to startup position.
@@ -520,8 +529,7 @@ void Node::on_activate(void) {
     if (drdMoveTo(positionCenter, true) < 0) {
       std::string message = "Cannot move to centre: ";
       message += dhdErrorGetLastStr();
-      Log(message);
-      on_error();
+      fail_startup(message);
     }
 
     // Phase 2 — apply runtime hold settings. All axes were regulated for
@@ -542,8 +550,7 @@ void Node::on_activate(void) {
       if (drdStop(true) < 0) {
         std::string message = "Cannot stop DRD regulation (force mode): ";
         message += dhdErrorGetLastStr();
-        Log(message);
-        on_error();
+        fail_startup(message);
       } else {
         Log("Force mode: DRD regulation stopped after centering; forces enabled.");
       }
@@ -563,8 +570,7 @@ void Node::on_activate(void) {
         if (drdStop(true) < 0) {
           std::string message = "Cannot stop DRD regulation: ";
           message += dhdErrorGetLastStr();
-          Log(message);
-          on_error();
+          fail_startup(message);
         }
       } else {
         std::string message = "DRD holding actuators: pos=";
@@ -866,25 +872,24 @@ void Node::on_activate(void) {
  *
  */
 void Node::on_deactivate(void) {
-
-  // Stop the haptic loop thread and publication timer.
+  // Mark inactive first so errors cannot recursively close the device.
+  active_ = false;
   haptic_running_ = false;
   if (haptic_thread_.joinable()) haptic_thread_.join();
-  timer_->cancel();
-  // timer_->destroy();
+  if (timer_) timer_->cancel();
 
-  // Close the connection to the Force Dimension device.
   Log("Shutting the Force Dimension interface down.");
-  auto result = hardware_disabled_ ? DHD_NO_ERROR : drdClose();
-  if (result == DHD_NO_ERROR)
-    Log("Force Dimension interface closed.");
-  else {
-    std::string message = "Unable to close the device connection: ";
-    // message += dhdErrorGetLast();
-    message += hardware_disabled_ ? "unknown error" : dhdErrorGetLastStr();
-    Log(message);
-    on_error();
+  if (!hardware_disabled_ && device_id_ >= 0) {
+    const auto closing_device_id = device_id_;
+    device_id_ = -1;
+    drdStop(false, closing_device_id);
+    if (drdClose(closing_device_id) < 0) {
+      RCLCPP_ERROR(get_logger(), "Unable to close the device connection: %s",
+                   dhdErrorGetLastStr());
+      return;
+    }
   }
+  Log("Force Dimension interface closed.");
 }
 
 /**

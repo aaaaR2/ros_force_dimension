@@ -14,13 +14,21 @@
 
 // Import the ROS interface.
 #include "rclcpp/rclcpp.hpp"
+#include <exception>
 
 // Starts a ROS2 Force Dimension Node.
 // Useful for testing.
 int main(int argc, char *argv[]) {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<force_dimension::Node>(true, true);
-  rclcpp::spin(node);
+  try {
+    auto node = std::make_shared<force_dimension::Node>(true, true);
+    rclcpp::spin(node);
+  } catch (const std::exception& error) {
+    RCLCPP_ERROR(rclcpp::get_logger("force_dimension"),
+                 "Startup failed: %s", error.what());
+    rclcpp::shutdown();
+    return 1;
+  }
   rclcpp::shutdown();
   return 0;
 }

@@ -35,6 +35,16 @@ endif()
 # Find the SDK.
 find_package(ForceDimensionSDK REQUIRED)
 
+# DRD exports the DHD API too; loading both shared libraries introduces two
+# SDK implementations into one process. Match the SDK's own -ldrd examples.
+if(UNIX)
+  find_library(FORCE_DIMENSION_DRD_LIBRARY NAMES drd
+    HINTS "${ForceDimensionSDK_DIR}/lib/release/lin-${CMAKE_SYSTEM_PROCESSOR}-gcc"
+    REQUIRED)
+  set(ForceDimensionSDK_LIBRARIES "${FORCE_DIMENSION_DRD_LIBRARY}")
+endif()
+
+
 # If the import of the Force Dimension SDK failed, then issue a message.
 if(NOT ForceDimensionSDK_FOUND)
     message(ERROR "Set Force Dimension SDK base path via the environmental variable ForceDimensionSDK_DIR, or via the argument:  cmake -D ForceDimensionSDK_DIR=/path/to/sdk.")
