@@ -300,10 +300,45 @@ void Node::on_configure(void) {
  */
 void Node::on_activate(void) {
 
+  // Read the fault status before cleanup changes the SDK/device state.
+  // A last force-off cause can be historical; retain the complete status too.
+  const auto log_startup_status = [this](const char* stage) {
+    if (hardware_disabled_ || device_id_ < 0) return;
+    int status[DHD_MAX_STATUS] = {};
+    if (dhdGetStatus(status, device_id_) < 0) {
+      RCLCPP_WARN(get_logger(), "Startup status [%s] unavailable: %s",
+                  stage, dhdErrorGetLastStr());
+      return;
+    }
+    const int cause = status[DHD_STATUS_FORCE_OFF_CAUSE];
+    const char* cause_name = "unknown";
+    switch (cause) {
+      case DHD_FORCE_OFF_NONE: cause_name = "none"; break;
+      case DHD_FORCE_OFF_BUTTON: cause_name = "button"; break;
+      case DHD_FORCE_OFF_VELOCITY: cause_name = "velocity_limit"; break;
+      case DHD_FORCE_OFF_WATCHDOG: cause_name = "watchdog"; break;
+      case DHD_FORCE_OFF_SOFTWARE: cause_name = "software"; break;
+      case DHD_FORCE_OFF_USBDISCN: cause_name = "usb_disconnect"; break;
+      case DHD_FORCE_OFF_DEADMAN: cause_name = "deadman"; break;
+    }
+    std::string values;
+    for (int i = 0; i < DHD_MAX_STATUS; ++i) {
+      if (i) values += ",";
+      values += std::to_string(status[i]);
+    }
+    RCLCPP_INFO(get_logger(),
+        "Startup status [%s]: initialized=%d running=%d "
+        "last_force_off=%s(%d) status=[%s]",
+        stage, static_cast<int>(drdIsInitialized(device_id_)),
+        static_cast<int>(drdIsRunning(device_id_)), cause_name, cause,
+        values.c_str());
+  };
+
   // Startup errors must not fall through into force control. The node is
   // not active yet, so on_error() cannot close a partially opened device.
-  const auto fail_startup = [this](const std::string& message) {
+  const auto fail_startup = [this, &log_startup_status](const std::string& message) {
     RCLCPP_ERROR(get_logger(), "%s", message.c_str());
+    log_startup_status("failure before cleanup");
     if (!hardware_disabled_ && device_id_ >= 0) {
       drdStop(false, device_id_);
       drdClose(device_id_);
@@ -365,6 +400,10 @@ void Node::on_activate(void) {
       Log("USB COM mode: " + std::string(name) + " (" +
           std::to_string(com_mode) + ")");
     }
+
+    RCLCPP_INFO(get_logger(), "Startup SDK=%s device_id=%d",
+                dhdGetSDKVersionStr(), static_cast<int>(device_id_));
+    log_startup_status("before initialization");
 
     // Initialise device if not already done (requires holding near centre).
     if (!drdIsInitialized() && drdAutoInit() < 0) {
